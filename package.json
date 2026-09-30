@@ -1,0 +1,22 @@
+{
+  "name": "com.vastlab.vast-metaverse-networking",
+  "version": "1.1.12",
+  "displayName": "VAST Lab Metaverse Networking Toolkit",
+  "description": "A unity package for VAST Lab Metaverse projects with UGS support.",
+  "unity": "6000.6",
+  "author": {
+    "name": "Brandon Coffey",
+    "email": "brandon.coffey@utdallas.edu"
+  },
+  "dependencies": {
+    "com.unity.textmeshpro": "1.4.6",
+    "com.vastlab.vast-metaverse-tools": "1.1.12",
+    "com.unity.services.multiplayer": "2.3.3",
+    "com.unity.netcode.gameobjects": "2.13.3"
+  },
+  "_dependencies_install_instructions": {
+    "com.vrmc.gltf": "https://github.com/vrm-c/UniVRM.git?path=/Packages/UniGLTF#v0.131.2",
+    "com.vrmc.vrm": "https://github.com/vrm-c/UniVRM.git?path=/Packages/VRM10#v0.131.2",
+    "com.vastlab.vast-metaverse-tools": "https://github.com/VAST-Lab/vast-metaverse-tools.git"
+  }
+}
