@@ -45,7 +45,6 @@ namespace VastMetaverseNetworking
             }
             Instance = this;
 
-            EvaluateWebGLLaunchMode();
             EnsureNetworkManagerExists();
 
             if (_startNetworked) MetaverseManager.DeferInitialPlayerSpawn = true;
@@ -55,23 +54,6 @@ namespace VastMetaverseNetworking
         {
             if (_joinButton != null) _joinButton.SetActive(!_startNetworked);
             if (_startNetworked) await JoinOrCreateLobbyAsync();
-        }
-
-        private void EvaluateWebGLLaunchMode()
-        {
-#if UNITY_WEBGL && !UNITY_EDITOR
-			if (ExternalTools.ParseURLHash(_urlMultiplayerParam, out string val))
-			{
-				if (val.Equals("true", StringComparison.OrdinalIgnoreCase) || val == "1")
-				{
-					_startMode = NetworkStartMode.StartNetworked;
-				}
-				else if (val.Equals("false", StringComparison.OrdinalIgnoreCase) || val == "0")
-				{
-					_startMode = NetworkStartMode.SingleplayerWithLobbyOption;
-				}
-			}
-#endif
         }
 
         private void EnsureNetworkManagerExists()
