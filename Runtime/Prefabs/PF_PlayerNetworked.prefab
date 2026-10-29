@@ -61,19 +61,49 @@ PrefabInstance:
       addedObject: {fileID: -3250832497951320783}
     - targetCorrespondingSourceObject: {fileID: 8858885971535242741, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
       insertIndex: -1
-      addedObject: {fileID: -4623896487319998825}
+      addedObject: {fileID: 3805861744269194644}
     - targetCorrespondingSourceObject: {fileID: 8858885971535242741, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 5882333419047632939}
-    - targetCorrespondingSourceObject: {fileID: 8858885971535242741, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 5527129200935802212}
+      addedObject: {fileID: 5160189717473335605}
   m_SourcePrefab: {fileID: 100100000, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
---- !u!95 &2456617653664379684 stripped
-Animator:
-  m_CorrespondingSourceObject: {fileID: 1127089334455146113, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
+--- !u!114 &484781144876683905 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 3101247979993200420, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
   m_PrefabInstance: {fileID: 3293135708692866469}
   m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6287733854619189328}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 955619bd4bac67b4ca1da325eee62da1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &3670071206294327651 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 2260005655901041862, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
+  m_PrefabInstance: {fileID: 3293135708692866469}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6795c70378181f5478727e2a3f4fe9c6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!54 &4205153397457917881 stripped
+Rigidbody:
+  m_CorrespondingSourceObject: {fileID: 1722668391955395100, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
+  m_PrefabInstance: {fileID: 3293135708692866469}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &4514696024489968541 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 1375002409261934136, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
+  m_PrefabInstance: {fileID: 3293135708692866469}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6287733854619189328}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: abea47bbc7b78fb41a67977054ed2671, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &6287733854619189328 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 8858885971535242741, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
@@ -106,7 +136,7 @@ MonoBehaviour:
   AutoObjectParentSync: 1
   SyncOwnerTransformWhenParented: 1
   AllowOwnerToParent: 0
---- !u!114 &-4623896487319998825
+--- !u!114 &3805861744269194644
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -115,37 +145,16 @@ MonoBehaviour:
   m_GameObject: {fileID: 6287733854619189328}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e8d0727d5ae3244e3b569694d3912374, type: 3}
+  m_Script: {fileID: 11500000, guid: a12bbfd8a9ef63440bd1e422167af090, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.Components.NetworkAnimator
+  m_EditorClassIdentifier: VastMetaverseNetworking.Runtime::VastMetaverseNetworking.NetworkPlayerSync
   ShowTopMostFoldoutHeaderGroup: 1
-  NetworkAnimatorExpanded: 0
-  AuthorityMode: 0
-  m_Animator: {fileID: 2456617653664379684}
-  TransitionStateInfoList:
-  - IsCrossFadeExit: 0
-    Layer: 0
-    OriginatingState: -2089788878
-    DestinationState: 125937960
-    TransitionDuration: 0.1
-    TriggerNameHash: 125937960
-    TransitionIndex: 0
-  AnimatorParameterEntries:
-    ParameterEntries:
-    - name: MoveSpeed
-      NameHash: 526065662
-      Synchronize: 1
-      ParameterType: 1
-    - name: Jump
-      NameHash: 125937960
-      Synchronize: 1
-      ParameterType: 9
-    - name: Seated
-      NameHash: -398636658
-      Synchronize: 1
-      ParameterType: 4
-  AnimatorParametersExpanded: 0
---- !u!114 &5882333419047632939
+  _playerController: {fileID: 484781144876683905}
+  _networkTransform: {fileID: 5160189717473335605}
+  _syncedObject: {fileID: 4514696024489968541}
+  _avatarLoader: {fileID: 3670071206294327651}
+  _rb: {fileID: 4205153397457917881}
+--- !u!114 &5160189717473335605
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -186,25 +195,8 @@ MonoBehaviour:
   ScaleThreshold: 0.01
   UseQuaternionSynchronization: 0
   UseQuaternionCompression: 0
-  UseHalfFloatPrecision: 0
+  UseHalfFloatPrecision: 1
   InLocalSpace: 0
   SwitchTransformSpaceWhenParented: 0
   Interpolate: 1
   SlerpPosition: 0
---- !u!114 &5527129200935802212
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6287733854619189328}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f6c0be61502bb534f922ebb746851216, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.Components.NetworkRigidbody
-  ShowTopMostFoldoutHeaderGroup: 1
-  NetworkRigidbodyBaseExpanded: 0
-  UseRigidBodyForMotion: 0
-  AutoUpdateKinematicState: 1
-  AutoSetKinematicOnDespawn: 1

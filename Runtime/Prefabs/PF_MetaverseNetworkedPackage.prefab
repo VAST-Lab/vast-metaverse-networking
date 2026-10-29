@@ -30,7 +30,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 6395169519795546222, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 0
+      value: -1.4997
       objectReference: {fileID: 0}
     - target: {fileID: 6395169519795546222, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
       propertyPath: m_LocalPosition.y
@@ -38,7 +38,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 6395169519795546222, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 0
+      value: 0.71331
       objectReference: {fileID: 0}
     - target: {fileID: 6395169519795546222, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
       propertyPath: m_LocalRotation.w
@@ -75,5 +75,33 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 8630772456879371013, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2364552231430808424}
   m_SourcePrefab: {fileID: 100100000, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
+--- !u!1 &1330521727772221020 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 8630772456879371013, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
+  m_PrefabInstance: {fileID: 7327461752118472025}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &2364552231430808424
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1330521727772221020}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d09efde8892f4d9418534567be9861ea, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: VastMetaverseNetworking.Runtime::VastMetaverseNetworking.SceneNetworkManager
+  _startMode: 0
+  _urlMultiplayerParam: multiplayer
+  _sessionName: GlobalLobby
+  _maxPlayers: 32
+  _useDistributedAuthority: 1
+  _networkedPlayerPrefab: {fileID: -3250832497951320783, guid: c335beefa13e9dd42867985cd0bbfc89, type: 3}
+  _sceneSyncManagerPrefab: {fileID: 1957154461362358291, guid: 26895b93dc985bd4bace03a89e7ed434, type: 3}
+  _voiceManager: {fileID: 2334862387052255170, guid: 40f638636b09e034c81409988a25f313, type: 3}

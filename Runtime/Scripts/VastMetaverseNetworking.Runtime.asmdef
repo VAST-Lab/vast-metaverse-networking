@@ -4,7 +4,11 @@
     "references": [
         "Unity.TextMeshPro",
         "Unity.Services.Authentication",
-        "Unity.Netcode.Runtime"
+        "Unity.Netcode.Runtime",
+        "VastMetaverseTools.Runtime",
+        "Unity.Services.Vivox",
+        "Unity.Services.Multiplayer",
+        "Unity.Services.Core"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
