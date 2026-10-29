@@ -4,6 +4,7 @@ using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Authentication;
 using Unity.Services.Core;
+using Unity.Services.Lobbies;
 using Unity.Services.Multiplayer;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -119,7 +120,49 @@ namespace VastMetaverseNetworking
                 if (_useDistributedAuthority) options.WithDistributedAuthorityNetwork();
                 else options.WithRelayNetwork();
 
-                _currentSession = await MultiplayerService.Instance.CreateOrJoinSessionAsync(activeSessionName, options);
+                // Attempt to rejoin if user recently joined a session, otherwise create or join a new session
+                var joinedSessions = await MultiplayerService.Instance.GetJoinedSessionIdsAsync();
+                if (joinedSessions != null && joinedSessions.Count > 0)
+                {
+                    string existingSessionId = joinedSessions[0];
+                    try
+                    {
+                        _currentSession = await MultiplayerService.Instance.ReconnectToSessionAsync(existingSessionId);
+                    }
+                    catch (Exception reconnectEx)
+                    {
+                        Debug.LogWarning($"[SceneNetworkManager] Reconnect failed ({reconnectEx.Message}). Evicting stale player from session {existingSessionId}...");
+                        try
+                        {
+                            await LobbyService.Instance.RemovePlayerAsync(existingSessionId, AuthenticationService.Instance.PlayerId);
+                        }
+                        catch { }
+                        _currentSession = await MultiplayerService.Instance.CreateOrJoinSessionAsync(activeSessionName, options);
+                    }
+                }
+                else
+                {
+                    try
+                    {
+                        _currentSession = await MultiplayerService.Instance.CreateOrJoinSessionAsync(activeSessionName, options);
+                    }
+                    catch (Exception joinEx) when (joinEx.Message.Contains("already a member"))
+                    {
+                        var retryJoinedSessions = await MultiplayerService.Instance.GetJoinedSessionIdsAsync();
+                        if (retryJoinedSessions != null && retryJoinedSessions.Count > 0)
+                        {
+                            foreach (var staleId in retryJoinedSessions)
+                            {
+                                try
+                                {
+                                    await LobbyService.Instance.RemovePlayerAsync(staleId, AuthenticationService.Instance.PlayerId);
+                                }
+                                catch { }
+                            }
+                        }
+                        _currentSession = await MultiplayerService.Instance.CreateOrJoinSessionAsync(activeSessionName, options);
+                    }
+                }
 
                 if (_voiceManager == null)
                 {
@@ -135,7 +178,7 @@ namespace VastMetaverseNetworking
                 {
                     MetaverseManager.Instance.SpawnSingleplayer();
                 }
-                if (_joinButton != null) _joinButton.SetActive(true);
+                _joinButton.SetActive(true);
             }
             finally
             {
@@ -190,9 +233,7 @@ namespace VastMetaverseNetworking
                 {
                     await _currentSession.LeaveAsync();
                 }
-                catch
-                {
-                }
+                catch { }
                 _currentSession = null;
             }
         }
