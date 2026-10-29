@@ -1,6 +1,6 @@
 {
 	"name": "com.vastlab.vast-metaverse-networking",
-	"version": "1.1.14",
+	"version": "1.1.15",
 	"displayName": "VAST Lab Metaverse Networking Toolkit",
 	"description": "A unity package for VAST Lab Metaverse projects with UGS support.",
 	"unity": "6000.6",
@@ -10,7 +10,7 @@
 	},
 	"dependencies": {
 		"com.unity.textmeshpro": "1.4.6",
-		"com.vastlab.vast-metaverse-tools": "1.1.39",
+		"com.vastlab.vast-metaverse-tools": "1.1.40",
 		"com.unity.services.authentication": "3.4.0",
 		"com.unity.services.multiplayer": "2.3.3",
 		"com.unity.services.vivox": "16.5.0",

@@ -9,26 +9,19 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using VastMetaverseTools.Managers;
 using VastMetaverseTools.Player;
-using VastMetaverseTools.UI;
 
 namespace VastMetaverseNetworking
 {
-    public enum NetworkStartMode
-    {
-        SingleplayerWithLobbyOption,
-        StartNetworked
-    }
-
     public class SceneNetworkManager : MonoBehaviour
     {
         public static SceneNetworkManager Instance { get; private set; }
 
-        [Header("Startup Mode")]
-        [SerializeField] private NetworkStartMode _startMode = NetworkStartMode.SingleplayerWithLobbyOption;
+        [SerializeField] private bool _startNetworked = false;
         [SerializeField] private string _urlMultiplayerParam = "multiplayer";
         [SerializeField] private string _sessionName = "GlobalLobby";
         [SerializeField] private int _maxPlayers = 32;
         [SerializeField] private bool _useDistributedAuthority = true;
+        [SerializeField] private GameObject _joinButton; // () => JoinLobbyNow
 
         [Header("Prefabs")]
         [SerializeField] private NetworkObject _networkedPlayerPrefab;
@@ -55,29 +48,13 @@ namespace VastMetaverseNetworking
             EvaluateWebGLLaunchMode();
             EnsureNetworkManagerExists();
 
-            if (_startMode == NetworkStartMode.StartNetworked)
-            {
-                MetaverseManager.DeferInitialPlayerSpawn = true;
-            }
+            if (_startNetworked) MetaverseManager.DeferInitialPlayerSpawn = true;
         }
 
         private async void Start()
         {
-            if (_startMode == NetworkStartMode.StartNetworked)
-            {
-                if (UIManager.Instance != null)
-                {
-                    UIManager.Instance.SetJoinLobbyButton(false, null);
-                }
-                await JoinOrCreateLobbyAsync();
-            }
-            else
-            {
-                if (UIManager.Instance != null)
-                {
-                    UIManager.Instance.SetJoinLobbyButton(true, OnJoinLobbyButtonClicked);
-                }
-            }
+            if (_joinButton != null) _joinButton.SetActive(!_startNetworked);
+            if (_startNetworked) await JoinOrCreateLobbyAsync();
         }
 
         private void EvaluateWebGLLaunchMode()
@@ -116,13 +93,10 @@ namespace VastMetaverseNetworking
             };
         }
 
-        public async void OnJoinLobbyButtonClicked()
+        public async void JoinLobbyNow()
         {
             if (_isConnecting || IsConnected) return;
-            if (UIManager.Instance != null)
-            {
-                UIManager.Instance.SetJoinLobbyButton(false, null);
-            }
+            if (_joinButton != null) _joinButton.SetActive(false);
             await JoinOrCreateLobbyAsync();
         }
 
@@ -133,15 +107,8 @@ namespace VastMetaverseNetworking
 
             try
             {
-                if (UnityServices.State == ServicesInitializationState.Uninitialized)
-                {
-                    await UnityServices.InitializeAsync();
-                }
-
-                if (!AuthenticationService.Instance.IsSignedIn)
-                {
-                    await AuthenticationService.Instance.SignInAnonymouslyAsync();
-                }
+                if (UnityServices.State == ServicesInitializationState.Uninitialized) await UnityServices.InitializeAsync();
+                if (!AuthenticationService.Instance.IsSignedIn) await AuthenticationService.Instance.SignInAnonymouslyAsync();
 
                 if (MetaverseManager.LocalPlayer != null)
                 {
@@ -167,24 +134,15 @@ namespace VastMetaverseNetworking
                     IsLocked = false
                 };
 
-                if (_useDistributedAuthority)
-                {
-                    options.WithDistributedAuthorityNetwork();
-                }
-                else
-                {
-                    options.WithRelayNetwork();
-                }
+                if (_useDistributedAuthority) options.WithDistributedAuthorityNetwork();
+                else options.WithRelayNetwork();
 
                 _currentSession = await MultiplayerService.Instance.CreateOrJoinSessionAsync(activeSessionName, options);
 
                 if (_voiceManager == null)
                 {
                     _voiceManager = FindAnyObjectByType<MetaverseVoiceManager>();
-                    if (_voiceManager == null)
-                    {
-                        _voiceManager = gameObject.AddComponent<MetaverseVoiceManager>();
-                    }
+                    if (_voiceManager == null) _voiceManager = gameObject.AddComponent<MetaverseVoiceManager>();
                 }
                 await _voiceManager.InitializeAndJoinVoiceAsync(activeSessionName);
             }
@@ -195,10 +153,7 @@ namespace VastMetaverseNetworking
                 {
                     MetaverseManager.Instance.SpawnSingleplayer();
                 }
-                if (UIManager.Instance != null && _startMode == NetworkStartMode.SingleplayerWithLobbyOption)
-                {
-                    UIManager.Instance.SetJoinLobbyButton(true, OnJoinLobbyButtonClicked);
-                }
+                if (_joinButton != null) _joinButton.SetActive(true);
             }
             finally
             {
@@ -237,10 +192,7 @@ namespace VastMetaverseNetworking
                 netPlayerController.TeleportTo(_pendingSpawnPos, _pendingSpawnRot);
                 _hasPendingTransform = false;
             }
-            if (MetaverseManager.Instance != null)
-            {
-                MetaverseManager.Instance.RegisterLocalPlayer(netPlayerController);
-            }
+            if (MetaverseManager.Instance != null) MetaverseManager.Instance.RegisterLocalPlayer(netPlayerController);
         }
 
         private async void OnDestroy()
