@@ -122,7 +122,7 @@ namespace VastMetaverseNetworking
                     _hasPendingTransform = true;
                 }
 
-                NetworkManager.Singleton.OnClientConnectedCallback += HandleClientConnected;
+                //NetworkManager.Singleton.OnClientConnectedCallback += HandleClientConnected;
                 NetworkManager.Singleton.OnServerStarted += HandleServerStarted;
 
                 string activeSessionName = $"{_sessionName}_{SceneManager.GetActiveScene().name}";
@@ -171,7 +171,7 @@ namespace VastMetaverseNetworking
             }
         }
 
-        private void HandleClientConnected(ulong clientId)
+        /*private void HandleClientConnected(ulong clientId)
         {
             if (clientId != NetworkManager.Singleton.LocalClientId) return;
 
@@ -183,7 +183,7 @@ namespace VastMetaverseNetworking
                     ConfigureSpawnedLocalPlayer(netPlayerController);
                 }
             }
-        }
+        }*/
 
         public void ConfigureSpawnedLocalPlayer(PlayerController netPlayerController)
         {
@@ -199,7 +199,7 @@ namespace VastMetaverseNetworking
         {
             if (NetworkManager.Singleton != null)
             {
-                NetworkManager.Singleton.OnClientConnectedCallback -= HandleClientConnected;
+                //NetworkManager.Singleton.OnClientConnectedCallback -= HandleClientConnected;
                 NetworkManager.Singleton.OnServerStarted -= HandleServerStarted;
             }
             if (_currentSession != null)

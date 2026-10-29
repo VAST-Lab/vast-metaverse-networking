@@ -50,6 +50,7 @@ namespace VastMetaverseNetworking
 
         public override void OnNetworkSpawn()
         {
+            _networkTransform.AuthorityMode = NetworkTransform.AuthorityModes.Owner;
             _syncedObject.SetNetworkState(true, IsOwner);
 
             _netSeated.OnValueChanged += OnSeatedChanged;
@@ -57,11 +58,15 @@ namespace VastMetaverseNetworking
 
             if (IsOwner)
             {
-                _playerController.OnTeleported += HandleLocalTeleported;
-
                 if (SceneNetworkManager.Instance != null)
                 {
                     SceneNetworkManager.Instance.ConfigureSpawnedLocalPlayer(_playerController);
+                }
+
+                _playerController.OnTeleported += HandleLocalTeleported;
+                if (_networkTransform.CanCommitToTransform)
+                {
+                    _networkTransform.Teleport(transform.position, transform.rotation, transform.localScale);
                 }
 
                 if (_playerController.AnimController != null)
@@ -136,7 +141,7 @@ namespace VastMetaverseNetworking
 
         private void HandleLocalTeleported(Vector3 position, Quaternion rotation)
         {
-            if (IsSpawned && IsOwner)
+            if (IsSpawned && _networkTransform.CanCommitToTransform)
             {
                 _networkTransform.Teleport(position, rotation, transform.localScale);
             }
