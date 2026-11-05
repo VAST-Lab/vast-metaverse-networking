@@ -23,8 +23,11 @@ namespace VastMetaverseNetworking
             serializer.SerializeValue(ref Rotation);
         }
 
-        public bool Equals(SceneSyncEntryState other) => Index == other.Index && OwnerClientId == other.OwnerClientId &&
-                                                         Position.Equals(other.Position) && Rotation.Equals(other.Rotation);
+        public bool Equals(SceneSyncEntryState other) =>
+            Index == other.Index &&
+            OwnerClientId == other.OwnerClientId &&
+            Position.Equals(other.Position) &&
+            Rotation.Equals(other.Rotation);
     }
 
     [RequireComponent(typeof(NetworkObject))]
@@ -36,57 +39,45 @@ namespace VastMetaverseNetworking
 
         private readonly List<NetworkSyncedObject> _sceneObjects = new List<NetworkSyncedObject>();
         private readonly Dictionary<NetworkSyncedObject, int> _objectToIndex = new Dictionary<NetworkSyncedObject, int>();
-        private NetworkList<SceneSyncEntryState> _syncedStates;
+        private readonly List<SceneSyncEntryState> _syncedStates = new List<SceneSyncEntryState>();
         private float _nextSyncTime;
 
         private void Awake()
         {
             Instance = this;
-            _syncedStates = new NetworkList<SceneSyncEntryState>(
-                default, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
         }
 
         public override void OnNetworkSpawn()
         {
             CollectSceneObjects();
+            _syncedStates.Clear();
 
-            if (IsServer)
+            ulong defaultOwnerId = NetworkManager.Singleton.LocalClientId;
+            for (int i = 0; i < _sceneObjects.Count; i++)
             {
-                for (int i = 0; i < _sceneObjects.Count; i++)
+                NetworkSyncedObject obj = _sceneObjects[i];
+                bool isAuthority = HasAuthority || IsServer;
+                _syncedStates.Add(new SceneSyncEntryState
                 {
-                    var obj = _sceneObjects[i];
-                    _syncedStates.Add(new SceneSyncEntryState
-                    {
-                        Index = i,
-                        OwnerClientId = NetworkManager.ServerClientId,
-                        Position = obj.transform.position,
-                        Rotation = obj.transform.rotation
-                    });
-                    obj.SetNetworkState(true, true);
-                }
-            }
-            else
-            {
-                for (int i = 0; i < _syncedStates.Count && i < _sceneObjects.Count; i++)
-                {
-                    var state = _syncedStates[i];
-                    var obj = _sceneObjects[state.Index];
-                    bool isLocalOwner = state.OwnerClientId == NetworkManager.Singleton.LocalClientId;
-                    obj.SetNetworkState(true, isLocalOwner);
-                    if (obj.SyncTransform && !isLocalOwner)
-                    {
-                        obj.transform.SetPositionAndRotation(state.Position, state.Rotation);
-                    }
-                }
+                    Index = i,
+                    OwnerClientId = isAuthority ? defaultOwnerId : ulong.MaxValue,
+                    Position = obj.transform.position,
+                    Rotation = obj.transform.rotation
+                });
+                obj.SetNetworkState(true, isAuthority);
             }
 
-            _syncedStates.OnListChanged += HandleSyncedStateChanged;
+            NetworkManager.Singleton.OnClientConnectedCallback += HandleClientConnected;
         }
 
         public override void OnNetworkDespawn()
         {
-            _syncedStates.OnListChanged -= HandleSyncedStateChanged;
-            foreach (var obj in _sceneObjects)
+            if (NetworkManager.Singleton != null)
+            {
+                NetworkManager.Singleton.OnClientConnectedCallback -= HandleClientConnected;
+            }
+
+            foreach (NetworkSyncedObject obj in _sceneObjects)
             {
                 if (obj != null)
                 {
@@ -96,31 +87,47 @@ namespace VastMetaverseNetworking
             }
         }
 
+        private void HandleClientConnected(ulong clientId)
+        {
+            if (clientId == NetworkManager.Singleton.LocalClientId) return;
+
+            ulong localId = NetworkManager.Singleton.LocalClientId;
+            for (int i = 0; i < _syncedStates.Count; i++)
+            {
+                SceneSyncEntryState state = _syncedStates[i];
+                if (state.OwnerClientId == localId && i < _sceneObjects.Count && _sceneObjects[i] != null)
+                {
+                    state.Position = _sceneObjects[i].transform.position;
+                    state.Rotation = _sceneObjects[i].transform.rotation;
+                    _syncedStates[i] = state;
+                    SyncEntryStateRpc(state.Index, state.OwnerClientId, state.Position, state.Rotation);
+                }
+            }
+        }
+
         private void CollectSceneObjects()
         {
             _sceneObjects.Clear();
             _objectToIndex.Clear();
-
-            var allObjects = FindObjectsByType<NetworkSyncedObject>(FindObjectsInactive.Include);
-            foreach (var obj in allObjects)
+            NetworkSyncedObject[] allObjects = FindObjectsByType<NetworkSyncedObject>(FindObjectsInactive.Include);
+            foreach (NetworkSyncedObject obj in allObjects)
             {
                 if (obj.GetComponent<PlayerController>() != null) continue;
                 if (obj.GetComponent<NetworkObject>() != null) continue;
                 _sceneObjects.Add(obj);
             }
-
             _sceneObjects.Sort((a, b) => string.CompareOrdinal(GetHierarchyPath(a.transform), GetHierarchyPath(b.transform)));
-
             for (int i = 0; i < _sceneObjects.Count; i++)
             {
                 _objectToIndex[_sceneObjects[i]] = i;
+                _sceneObjects[i].OnOwnershipRequested -= HandleOwnershipRequested;
                 _sceneObjects[i].OnOwnershipRequested += HandleOwnershipRequested;
             }
         }
 
         private static string GetHierarchyPath(Transform current)
         {
-            var sb = new StringBuilder(current.name);
+            StringBuilder sb = new StringBuilder(current.name);
             while (current.parent != null)
             {
                 current = current.parent;
@@ -132,44 +139,48 @@ namespace VastMetaverseNetworking
 
         private void HandleOwnershipRequested(NetworkSyncedObject obj)
         {
-            if (!_objectToIndex.TryGetValue(obj, out int index)) return;
+            if (!IsSpawned || !_objectToIndex.TryGetValue(obj, out int index)) return;
             RequestOwnershipRpc(index, NetworkManager.Singleton.LocalClientId);
         }
 
-        [Rpc(SendTo.Server)]
+        [Rpc(SendTo.Everyone)]
         private void RequestOwnershipRpc(int index, ulong requesterClientId)
         {
-            if (index < 0 || index >= _syncedStates.Count) return;
+            if (index < 0 || index >= _syncedStates.Count || index >= _sceneObjects.Count) return;
 
-            var state = _syncedStates[index];
+            SceneSyncEntryState state = _syncedStates[index];
             state.OwnerClientId = requesterClientId;
             _syncedStates[index] = state;
 
-            for (int i = 0; i < _sceneObjects.Count; i++)
+            NetworkSyncedObject obj = _sceneObjects[index];
+            if (obj != null)
             {
-                if (i == index && _sceneObjects[i] != null)
-                {
-                    _sceneObjects[i].SetNetworkState(true, requesterClientId == NetworkManager.Singleton.LocalClientId);
-                }
+                obj.SetNetworkState(true, requesterClientId == NetworkManager.Singleton.LocalClientId);
             }
         }
 
-        private void HandleSyncedStateChanged(NetworkListEvent<SceneSyncEntryState> changeEvent)
+        [Rpc(SendTo.Everyone)]
+        private void SyncEntryStateRpc(int index, ulong ownerClientId, Vector3 position, Quaternion rotation)
         {
-            int idx = changeEvent.Value.Index;
-            if (idx < 0 || idx >= _sceneObjects.Count) return;
+            if (index < 0 || index >= _syncedStates.Count || index >= _sceneObjects.Count) return;
 
-            var obj = _sceneObjects[idx];
-            if (obj == null) return;
+            SceneSyncEntryState state = _syncedStates[index];
+            state.OwnerClientId = ownerClientId;
+            state.Position = position;
+            state.Rotation = rotation;
+            _syncedStates[index] = state;
 
-            bool isOwner = changeEvent.Value.OwnerClientId == NetworkManager.Singleton.LocalClientId;
-            obj.SetNetworkState(true, isOwner);
+            NetworkSyncedObject obj = _sceneObjects[index];
+            if (obj != null)
+            {
+                bool isLocalOwner = ownerClientId == NetworkManager.Singleton.LocalClientId;
+                obj.SetNetworkState(true, isLocalOwner);
+            }
         }
 
         private void Update()
         {
-            if (!IsSpawned) return;
-
+            if (!IsSpawned || NetworkManager.Singleton == null) return;
             ulong localClientId = NetworkManager.Singleton.LocalClientId;
 
             if (Time.time >= _nextSyncTime)
@@ -177,16 +188,19 @@ namespace VastMetaverseNetworking
                 _nextSyncTime = Time.time + (1f / _syncRate);
                 for (int i = 0; i < _syncedStates.Count && i < _sceneObjects.Count; i++)
                 {
-                    var obj = _sceneObjects[i];
+                    NetworkSyncedObject obj = _sceneObjects[i];
                     if (obj == null || !obj.SyncTransform) continue;
 
-                    var state = _syncedStates[i];
+                    SceneSyncEntryState state = _syncedStates[i];
                     if (state.OwnerClientId == localClientId)
                     {
                         if (Vector3.SqrMagnitude(obj.transform.position - state.Position) > 0.0001f ||
                             Quaternion.Angle(obj.transform.rotation, state.Rotation) > 0.1f)
                         {
-                            UpdateTransformRpc(i, obj.transform.position, obj.transform.rotation);
+                            state.Position = obj.transform.position;
+                            state.Rotation = obj.transform.rotation;
+                            _syncedStates[i] = state;
+                            UpdateTransformRpc(i, state.Position, state.Rotation);
                         }
                     }
                 }
@@ -194,25 +208,24 @@ namespace VastMetaverseNetworking
 
             for (int i = 0; i < _syncedStates.Count && i < _sceneObjects.Count; i++)
             {
-                var obj = _sceneObjects[i];
+                NetworkSyncedObject obj = _sceneObjects[i];
                 if (obj == null || !obj.SyncTransform) continue;
 
-                var state = _syncedStates[i];
-                if (state.OwnerClientId != localClientId)
+                SceneSyncEntryState state = _syncedStates[i];
+                if (state.OwnerClientId != localClientId && state.OwnerClientId != ulong.MaxValue)
                 {
-                    var pos = Vector3.Lerp(obj.transform.position, state.Position, Time.deltaTime * 15f);
-                    var rot = Quaternion.Slerp(obj.transform.rotation, state.Rotation, Time.deltaTime * 15f);
+                    Vector3 pos = Vector3.Lerp(obj.transform.position, state.Position, Time.deltaTime * 15f);
+                    Quaternion rot = Quaternion.Slerp(obj.transform.rotation, state.Rotation, Time.deltaTime * 15f);
                     obj.transform.SetPositionAndRotation(pos, rot);
                 }
             }
         }
 
-        [Rpc(SendTo.Server)]
+        [Rpc(SendTo.NotMe)]
         private void UpdateTransformRpc(int index, Vector3 position, Quaternion rotation)
         {
             if (index < 0 || index >= _syncedStates.Count) return;
-
-            var state = _syncedStates[index];
+            SceneSyncEntryState state = _syncedStates[index];
             state.Position = position;
             state.Rotation = rotation;
             _syncedStates[index] = state;

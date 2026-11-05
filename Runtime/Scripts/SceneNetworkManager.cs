@@ -1,10 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Authentication;
 using Unity.Services.Core;
-using Unity.Services.Lobbies;
 using Unity.Services.Multiplayer;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -20,9 +20,9 @@ namespace VastMetaverseNetworking
         [SerializeField] private bool _startNetworked = false;
         [SerializeField] private string _urlMultiplayerParam = "multiplayer";
         [SerializeField] private string _sessionName = "GlobalLobby";
-        [SerializeField] private int _maxPlayers = 32;
+        [SerializeField] private int _maxPlayers = 16;
         [SerializeField] private bool _useDistributedAuthority = true;
-        [SerializeField] private GameObject _joinButton; // () => JoinLobbyNow
+        [SerializeField] private GameObject _joinButton;
 
         [Header("Prefabs")]
         [SerializeField] private NetworkObject _networkedPlayerPrefab;
@@ -45,9 +45,7 @@ namespace VastMetaverseNetworking
                 return;
             }
             Instance = this;
-
             EnsureNetworkManagerExists();
-
             if (_startNetworked) MetaverseManager.DeferInitialPlayerSpawn = true;
         }
 
@@ -59,7 +57,16 @@ namespace VastMetaverseNetworking
 
         private void EnsureNetworkManagerExists()
         {
-            if (NetworkManager.Singleton != null) return;
+            if (NetworkManager.Singleton != null)
+            {
+                UnityTransport existingTransport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+                if (existingTransport != null) existingTransport.UseWebSockets = true;
+                if (_networkedPlayerPrefab != null && NetworkManager.Singleton.NetworkConfig.PlayerPrefab == null)
+                {
+                    NetworkManager.Singleton.NetworkConfig.PlayerPrefab = _networkedPlayerPrefab.gameObject;
+                }
+                return;
+            }
 
             GameObject netManagerObj = new GameObject("NetworkManager");
             DontDestroyOnLoad(netManagerObj);
@@ -87,98 +94,58 @@ namespace VastMetaverseNetworking
         {
             if (_isConnecting || IsConnected) return;
             _isConnecting = true;
+            if (_joinButton != null) _joinButton.SetActive(false);
 
             try
             {
-                if (UnityServices.State == ServicesInitializationState.Uninitialized) await UnityServices.InitializeAsync();
-                if (!AuthenticationService.Instance.IsSignedIn) await AuthenticationService.Instance.SignInAnonymouslyAsync();
+                EnsureNetworkManagerExists();
 
-                if (MetaverseManager.LocalPlayer != null)
+                if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
                 {
-                    _pendingSpawnPos = MetaverseManager.LocalPlayer.transform.position;
-                    _pendingSpawnRot = MetaverseManager.LocalPlayer.transform.rotation;
-                    _hasPendingTransform = true;
-                }
-                else if (MetaverseManager.Instance != null)
-                {
-                    MetaverseManager.Instance.GetSpawnTransform(out _pendingSpawnPos, out _pendingSpawnRot);
-                    _hasPendingTransform = true;
+                    NetworkManager.Singleton.Shutdown();
+                    while (NetworkManager.Singleton.ShutdownInProgress)
+                    {
+                        await Task.Yield();
+                    }
                 }
 
-                //NetworkManager.Singleton.OnClientConnectedCallback += HandleClientConnected;
+                await InitializeServicesAndAuthAsync();
+                CacheAndPrepareLocalPlayerSpawn();
+
+                NetworkManager.Singleton.OnServerStarted -= HandleServerStarted;
                 NetworkManager.Singleton.OnServerStarted += HandleServerStarted;
+                NetworkManager.Singleton.OnClientStopped -= HandleClientStopped;
+                NetworkManager.Singleton.OnClientStopped += HandleClientStopped;
 
-                string activeSessionName = $"{_sessionName}_{SceneManager.GetActiveScene().name}";
-                var options = new SessionOptions
-                {
-                    Name = activeSessionName,
-                    MaxPlayers = _maxPlayers,
-                    IsPrivate = false,
-                    IsLocked = false
-                };
+                string baseRoomKey = SanitizeSessionKey($"{_sessionName}_{SceneManager.GetActiveScene().name}");
+                await CleanupStaleSessionsAsync();
 
-                if (_useDistributedAuthority) options.WithDistributedAuthorityNetwork();
-                else options.WithRelayNetwork();
-
-                // Attempt to rejoin if user recently joined a session, otherwise create or join a new session
-                var joinedSessions = await MultiplayerService.Instance.GetJoinedSessionIdsAsync();
-                if (joinedSessions != null && joinedSessions.Count > 0)
-                {
-                    string existingSessionId = joinedSessions[0];
-                    try
-                    {
-                        _currentSession = await MultiplayerService.Instance.ReconnectToSessionAsync(existingSessionId);
-                    }
-                    catch (Exception reconnectEx)
-                    {
-                        Debug.LogWarning($"[SceneNetworkManager] Reconnect failed ({reconnectEx.Message}). Evicting stale player from session {existingSessionId}...");
-                        try
-                        {
-                            await LobbyService.Instance.RemovePlayerAsync(existingSessionId, AuthenticationService.Instance.PlayerId);
-                        }
-                        catch { }
-                        _currentSession = await MultiplayerService.Instance.CreateOrJoinSessionAsync(activeSessionName, options);
-                    }
-                }
-                else
-                {
-                    try
-                    {
-                        _currentSession = await MultiplayerService.Instance.CreateOrJoinSessionAsync(activeSessionName, options);
-                    }
-                    catch (Exception joinEx) when (joinEx.Message.Contains("already a member"))
-                    {
-                        var retryJoinedSessions = await MultiplayerService.Instance.GetJoinedSessionIdsAsync();
-                        if (retryJoinedSessions != null && retryJoinedSessions.Count > 0)
-                        {
-                            foreach (var staleId in retryJoinedSessions)
-                            {
-                                try
-                                {
-                                    await LobbyService.Instance.RemovePlayerAsync(staleId, AuthenticationService.Instance.PlayerId);
-                                }
-                                catch { }
-                            }
-                        }
-                        _currentSession = await MultiplayerService.Instance.CreateOrJoinSessionAsync(activeSessionName, options);
-                    }
-                }
+                _currentSession = await ConnectWithRecycleFallbackAsync(baseRoomKey);
+                _currentSession.RemovedFromSession += HandleRemovedFromSession;
+                _currentSession.Deleted += HandleSessionDeleted;
 
                 if (_voiceManager == null)
                 {
                     _voiceManager = FindAnyObjectByType<MetaverseVoiceManager>();
                     if (_voiceManager == null) _voiceManager = gameObject.AddComponent<MetaverseVoiceManager>();
                 }
-                await _voiceManager.InitializeAndJoinVoiceAsync(activeSessionName);
+                await _voiceManager.InitializeAndJoinVoiceAsync(baseRoomKey);
             }
             catch (Exception e)
             {
-                Debug.LogError($"[SceneNetworkManager] Failed to join session: {e.Message}");
+                Debug.LogError($"[SceneNetworkManager] Failed to join session: {e}");
+                await ForceCleanupFailedConnectionAsync();
+
                 if (MetaverseManager.LocalPlayer == null && MetaverseManager.Instance != null)
                 {
                     MetaverseManager.Instance.SpawnSingleplayer();
                 }
-                _joinButton.SetActive(true);
+                else if (MetaverseManager.LocalPlayer != null)
+                {
+                    MetaverseManager.LocalPlayer.gameObject.SetActive(true);
+                }
+
+                if (_joinButton != null) _joinButton.SetActive(true);
             }
             finally
             {
@@ -186,29 +153,225 @@ namespace VastMetaverseNetworking
             }
         }
 
+        private async Task InitializeServicesAndAuthAsync()
+        {
+            if (UnityServices.State == ServicesInitializationState.Uninitialized)
+            {
+                InitializationOptions initOptions = new InitializationOptions();
+                string profileName = GetUniqueProfileName();
+                initOptions.SetProfile(profileName);
+                await UnityServices.InitializeAsync(initOptions);
+            }
+
+            if (!AuthenticationService.Instance.IsSignedIn)
+            {
+                await AuthenticationService.Instance.SignInAnonymouslyAsync();
+            }
+        }
+
+        private string GetUniqueProfileName()
+        {
+            const string prefKey = "VastMetaverse_AuthProfile";
+            string savedProfile = PlayerPrefs.GetString(prefKey, "");
+            if (string.IsNullOrEmpty(savedProfile))
+            {
+                savedProfile = $"Player_{Guid.NewGuid():N}".Substring(0, 20);
+                PlayerPrefs.SetString(prefKey, savedProfile);
+                PlayerPrefs.Save();
+            }
+#if UNITY_EDITOR
+            return $"{savedProfile}_Editor";
+#else
+			return savedProfile;
+#endif
+        }
+
+        private static string SanitizeSessionKey(string rawKey)
+        {
+            char[] arr = rawKey.ToCharArray();
+            for (int i = 0; i < arr.Length; i++)
+            {
+                if (!char.IsLetterOrDigit(arr[i]) && arr[i] != '_' && arr[i] != '-')
+                {
+                    arr[i] = '_';
+                }
+            }
+            return new string(arr);
+        }
+
+        private void CacheAndPrepareLocalPlayerSpawn()
+        {
+            if (MetaverseManager.LocalPlayer != null)
+            {
+                _pendingSpawnPos = GetSafeGroundPosition(MetaverseManager.LocalPlayer.transform.position);
+                _pendingSpawnRot = MetaverseManager.LocalPlayer.transform.rotation;
+                _hasPendingTransform = true;
+
+                Collider[] cols = MetaverseManager.LocalPlayer.GetComponentsInChildren<Collider>(true);
+                foreach (Collider col in cols) col.enabled = false;
+                MetaverseManager.LocalPlayer.gameObject.SetActive(false);
+            }
+            else if (MetaverseManager.Instance != null)
+            {
+                MetaverseManager.Instance.GetSpawnTransform(out Vector3 rawPos, out _pendingSpawnRot);
+                _pendingSpawnPos = GetSafeGroundPosition(rawPos);
+                _hasPendingTransform = true;
+            }
+        }
+
+        private Vector3 GetSafeGroundPosition(Vector3 targetPos)
+        {
+            Vector3 rayStart = targetPos + Vector3.up * 1.5f;
+            if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit hit, 5f, ~0, QueryTriggerInteraction.Ignore))
+            {
+                return hit.point + Vector3.up * 0.08f;
+            }
+            return targetPos + Vector3.up * 0.08f;
+        }
+
+        private async Task CleanupStaleSessionsAsync()
+        {
+            try
+            {
+                IList<string> joinedSessions = await MultiplayerService.Instance.GetJoinedSessionIdsAsync();
+                if (joinedSessions == null || joinedSessions.Count == 0) return;
+
+                foreach (string staleSessionId in joinedSessions)
+                {
+                    try
+                    {
+                        ISession staleSession = await MultiplayerService.Instance.ReconnectToSessionAsync(staleSessionId);
+                        await staleSession.LeaveAsync();
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[SceneNetworkManager] CleanupStaleSessions warning: {e.Message}");
+            }
+        }
+
+        private SessionOptions BuildSessionOptions(string sessionName, string roomTag)
+        {
+            SessionOptions options = new SessionOptions
+            {
+                Name = sessionName,
+                MaxPlayers = _maxPlayers,
+                IsPrivate = false,
+                IsLocked = false,
+                SessionProperties = new Dictionary<string, SessionProperty>
+                {
+                    { "RoomTag", new SessionProperty(roomTag, VisibilityPropertyOptions.Public, PropertyIndex.String1) }
+                }
+            };
+
+            if (_useDistributedAuthority) options.WithDistributedAuthorityNetwork();
+            else options.WithRelayNetwork();
+
+            return options;
+        }
+
+        private async Task<ISession> ConnectWithRecycleFallbackAsync(string baseRoomKey)
+        {
+            try
+            {
+                QuerySessionsOptions queryOptions = new QuerySessionsOptions
+                {
+                    FilterOptions = new List<FilterOption>
+                    {
+                        new FilterOption(FilterField.StringIndex1, baseRoomKey, FilterOperation.Equal),
+                        new FilterOption(FilterField.AvailableSlots, "1", FilterOperation.GreaterOrEqual)
+                    }
+                };
+
+                QuerySessionsResults results = await MultiplayerService.Instance.QuerySessionsAsync(queryOptions);
+                if (results != null && results.Sessions != null)
+                {
+                    foreach (ISessionInfo sessionInfo in results.Sessions)
+                    {
+                        if (sessionInfo.MaxPlayers - sessionInfo.AvailableSlots <= 0) continue;
+
+                        try
+                        {
+                            return await MultiplayerService.Instance.JoinSessionByIdAsync(sessionInfo.Id);
+                        }
+                        catch (Exception joinByIdEx)
+                        {
+                            Debug.LogWarning($"[SceneNetworkManager] Active session {sessionInfo.Id} was unreachable ({joinByIdEx.Message}). Trying fallback...");
+                        }
+                    }
+                }
+            }
+            catch (Exception queryEx)
+            {
+                Debug.LogWarning($"[SceneNetworkManager] QuerySessions warning: {queryEx.Message}");
+            }
+
+            Exception lastException = null;
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                string candidateSessionId = attempt == 0 ? baseRoomKey : $"{baseRoomKey}_{attempt}";
+                SessionOptions options = BuildSessionOptions(candidateSessionId, baseRoomKey);
+
+                try
+                {
+                    return await MultiplayerService.Instance.CreateOrJoinSessionAsync(candidateSessionId, options);
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                    Debug.LogWarning($"[SceneNetworkManager] Slot '{candidateSessionId}' unavailable or recycling ({ex.Message}). Trying next slot...");
+                    await CleanupStaleSessionsAsync();
+                    await Task.Delay(300);
+                }
+            }
+
+            SessionOptions fallbackOptions = BuildSessionOptions(baseRoomKey, baseRoomKey);
+            try
+            {
+                return await MultiplayerService.Instance.CreateSessionAsync(fallbackOptions);
+            }
+            catch
+            {
+                throw lastException ?? new Exception("Unable to create or join any session slot.");
+            }
+        }
+
         private void HandleServerStarted()
         {
-            if (!NetworkManager.Singleton.IsServer) return;
-            if (_sceneSyncManagerPrefab != null && SceneObjectSyncManager.Instance == null)
+            if (NetworkManager.Singleton == null) return;
+            bool canSpawnSceneSync = NetworkManager.Singleton.IsServer ||
+                                     (_useDistributedAuthority && _currentSession != null && _currentSession.IsHost);
+
+            if (canSpawnSceneSync && _sceneSyncManagerPrefab != null && SceneObjectSyncManager.Instance == null)
             {
-                var syncMgr = Instantiate(_sceneSyncManagerPrefab);
+                SceneObjectSyncManager syncMgr = Instantiate(_sceneSyncManagerPrefab);
                 syncMgr.NetworkObject.Spawn();
             }
         }
 
-        /*private void HandleClientConnected(ulong clientId)
+        private void HandleClientStopped(bool _)
         {
-            if (clientId != NetworkManager.Singleton.LocalClientId) return;
-
-            if (NetworkManager.Singleton.LocalClient?.PlayerObject != null)
+            if (!_isConnecting && _joinButton != null)
             {
-                var netPlayerController = NetworkManager.Singleton.LocalClient.PlayerObject.GetComponent<PlayerController>();
-                if (netPlayerController != null)
-                {
-                    ConfigureSpawnedLocalPlayer(netPlayerController);
-                }
+                _joinButton.SetActive(true);
             }
-        }*/
+        }
+
+        private void HandleRemovedFromSession()
+        {
+            _currentSession = null;
+            if (_joinButton != null) _joinButton.SetActive(true);
+        }
+
+        private void HandleSessionDeleted()
+        {
+            _currentSession = null;
+            if (_joinButton != null) _joinButton.SetActive(true);
+        }
 
         public void ConfigureSpawnedLocalPlayer(PlayerController netPlayerController)
         {
@@ -217,18 +380,50 @@ namespace VastMetaverseNetworking
                 netPlayerController.TeleportTo(_pendingSpawnPos, _pendingSpawnRot);
                 _hasPendingTransform = false;
             }
-            if (MetaverseManager.Instance != null) MetaverseManager.Instance.RegisterLocalPlayer(netPlayerController);
+            if (MetaverseManager.Instance != null)
+            {
+                MetaverseManager.Instance.RegisterLocalPlayer(netPlayerController);
+            }
+        }
+
+        private async Task ForceCleanupFailedConnectionAsync()
+        {
+            if (_currentSession != null)
+            {
+                try
+                {
+                    await _currentSession.LeaveAsync();
+                }
+                catch { }
+                _currentSession = null;
+            }
+
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                NetworkManager.Singleton.Shutdown();
+            }
+        }
+
+        private void OnApplicationQuit()
+        {
+            if (_currentSession != null)
+            {
+                _ = _currentSession.LeaveAsync();
+                _currentSession = null;
+            }
         }
 
         private async void OnDestroy()
         {
             if (NetworkManager.Singleton != null)
             {
-                //NetworkManager.Singleton.OnClientConnectedCallback -= HandleClientConnected;
                 NetworkManager.Singleton.OnServerStarted -= HandleServerStarted;
+                NetworkManager.Singleton.OnClientStopped -= HandleClientStopped;
             }
             if (_currentSession != null)
             {
+                _currentSession.RemovedFromSession -= HandleRemovedFromSession;
+                _currentSession.Deleted -= HandleSessionDeleted;
                 try
                 {
                     await _currentSession.LeaveAsync();

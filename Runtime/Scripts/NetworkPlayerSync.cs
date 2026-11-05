@@ -52,28 +52,30 @@ namespace VastMetaverseNetworking
         {
             _networkTransform.AuthorityMode = NetworkTransform.AuthorityModes.Owner;
             _syncedObject.SetNetworkState(true, IsOwner);
-
             _netSeated.OnValueChanged += OnSeatedChanged;
             _netAvatarIndex.OnValueChanged += OnAvatarIndexChanged;
-
             if (IsOwner)
             {
+                if (_rb != null)
+                {
+                    _rb.isKinematic = false;
+                    _rb.linearVelocity = Vector3.zero;
+                    _rb.angularVelocity = Vector3.zero;
+                }
                 if (SceneNetworkManager.Instance != null)
                 {
                     SceneNetworkManager.Instance.ConfigureSpawnedLocalPlayer(_playerController);
                 }
-
+                Physics.SyncTransforms();
                 _playerController.OnTeleported += HandleLocalTeleported;
                 if (_networkTransform.CanCommitToTransform)
                 {
                     _networkTransform.Teleport(transform.position, transform.rotation, transform.localScale);
                 }
-
                 if (_playerController.AnimController != null)
                 {
                     _playerController.AnimController.OnJumpTriggered += HandleLocalJump;
                 }
-
                 CharacterCustomizer.OnLocalAvatarSelected += HandleLocalAvatarSelected;
                 if (CharacterCustomizer.SelectedAvatarIndex >= 0)
                 {
@@ -83,7 +85,10 @@ namespace VastMetaverseNetworking
             }
             else
             {
-                if (_rb != null) _rb.isKinematic = true;
+                if (_rb != null)
+                {
+                    _rb.isKinematic = true;
+                }
                 if (_playerController.InputReader != null) _playerController.InputReader.SetInputEnabled(false);
                 if (MetaverseManager.Instance != null && _playerController.AnimController != null)
                 {
