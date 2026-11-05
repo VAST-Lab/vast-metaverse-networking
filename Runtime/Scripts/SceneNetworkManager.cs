@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Threading.Tasks;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
@@ -27,10 +26,7 @@ namespace VastMetaverseNetworking
 
         private void Update()
         {
-            if (_transport != null && !_transport.UseWebSockets)
-            {
-                _transport.UseWebSockets = true;
-            }
+            if (_transport != null && !_transport.UseWebSockets) _transport.UseWebSockets = true;
         }
     }
 
@@ -81,19 +77,21 @@ namespace VastMetaverseNetworking
             if (NetworkManager.Singleton != null)
             {
                 UnityTransport existingTransport = NetworkManager.Singleton.GetComponent<UnityTransport>();
-                if (existingTransport != null)
+                if (existingTransport == null)
                 {
-                    existingTransport.UseWebSockets = true;
-                    EnsureWebSocketEnforcer(existingTransport);
+                    existingTransport = NetworkManager.Singleton.gameObject.AddComponent<UnityTransport>();
                 }
-                if (_networkedPlayerPrefab != null && NetworkManager.Singleton.NetworkConfig.PlayerPrefab == null)
-                {
-                    NetworkManager.Singleton.NetworkConfig.PlayerPrefab = _networkedPlayerPrefab.gameObject;
-                }
+                existingTransport.UseWebSockets = true;
+                EnsureWebSocketEnforcer(existingTransport);
+
+                if (NetworkManager.Singleton.NetworkConfig == null) NetworkManager.Singleton.NetworkConfig = new NetworkConfig();
+                NetworkManager.Singleton.NetworkConfig.NetworkTransport = existingTransport;
+                RegisterNetworkPrefabs(NetworkManager.Singleton);
                 return;
             }
 
             GameObject netManagerObj = new GameObject("NetworkManager");
+            netManagerObj.SetActive(false);
             DontDestroyOnLoad(netManagerObj);
 
             UnityTransport transport = netManagerObj.AddComponent<UnityTransport>();
@@ -107,13 +105,45 @@ namespace VastMetaverseNetworking
                 PlayerPrefab = _networkedPlayerPrefab != null ? _networkedPlayerPrefab.gameObject : null,
                 EnableSceneManagement = false
             };
+
+            RegisterNetworkPrefabs(netManager);
+            netManagerObj.SetActive(true);
+
+            if (NetworkManager.Singleton == null) netManager.SetSingleton();
+        }
+
+        private void RegisterNetworkPrefabs(NetworkManager netManager)
+        {
+            if (netManager == null || netManager.NetworkConfig == null || netManager.IsListening) return;
+
+            if (_networkedPlayerPrefab != null)
+            {
+                netManager.NetworkConfig.PlayerPrefab = _networkedPlayerPrefab.gameObject;
+                TryAddPrefabToConfig(netManager, _networkedPlayerPrefab.gameObject);
+            }
+
+            if (_sceneSyncManagerPrefab != null)
+            {
+                TryAddPrefabToConfig(netManager, _sceneSyncManagerPrefab.gameObject);
+            }
+        }
+
+        private static void TryAddPrefabToConfig(NetworkManager netManager, GameObject prefab)
+        {
+            if (prefab == null || netManager.NetworkConfig.Prefabs == null) return;
+            if (!netManager.NetworkConfig.Prefabs.Contains(prefab))
+            {
+                netManager.NetworkConfig.Prefabs.Add(new NetworkPrefab { Prefab = prefab });
+            }
         }
 
         private static void EnsureWebSocketEnforcer(UnityTransport transport)
         {
             if (transport == null) return;
-            WebSocketTransportEnforcer enforcer = transport.GetComponent<WebSocketTransportEnforcer>();
-            if (enforcer == null) enforcer = transport.gameObject.AddComponent<WebSocketTransportEnforcer>();
+            if (!transport.TryGetComponent<WebSocketTransportEnforcer>(out var enforcer))
+            {
+                enforcer = transport.gameObject.AddComponent<WebSocketTransportEnforcer>();
+            }
             enforcer.Initialize(transport);
         }
 
@@ -143,11 +173,14 @@ namespace VastMetaverseNetworking
                     }
                 }
 
+                RegisterNetworkPrefabs(NetworkManager.Singleton);
                 await InitializeServicesAndAuthAsync();
                 CacheLocalPlayerSpawnTransform();
 
-                NetworkManager.Singleton.OnServerStarted -= HandleServerStarted;
-                NetworkManager.Singleton.OnServerStarted += HandleServerStarted;
+                NetworkManager.Singleton.OnServerStarted -= HandleNetworkStarted;
+                NetworkManager.Singleton.OnServerStarted += HandleNetworkStarted;
+                NetworkManager.Singleton.OnClientStarted -= HandleNetworkStarted;
+                NetworkManager.Singleton.OnClientStarted += HandleNetworkStarted;
                 NetworkManager.Singleton.OnClientStopped -= HandleClientStopped;
                 NetworkManager.Singleton.OnClientStopped += HandleClientStopped;
 
@@ -157,6 +190,8 @@ namespace VastMetaverseNetworking
                 _currentSession = await ConnectWithRecycleFallbackAsync(baseRoomKey);
                 _currentSession.RemovedFromSession += HandleRemovedFromSession;
                 _currentSession.Deleted += HandleSessionDeleted;
+
+                TrySpawnSceneSyncManager();
 
                 if (_voiceManager == null)
                 {
@@ -169,12 +204,10 @@ namespace VastMetaverseNetworking
             {
                 Debug.LogError($"[SceneNetworkManager] Failed to join session: {e}");
                 await ForceCleanupFailedConnectionAsync();
-
                 if (MetaverseManager.LocalPlayer == null && MetaverseManager.Instance != null)
                 {
                     MetaverseManager.Instance.SpawnSingleplayer();
                 }
-
                 if (_joinButton != null) _joinButton.SetActive(true);
             }
             finally
@@ -192,7 +225,10 @@ namespace VastMetaverseNetworking
                 initOptions.SetProfile(profileName);
                 await UnityServices.InitializeAsync(initOptions);
             }
-
+            while (UnityServices.State == ServicesInitializationState.Initializing)
+            {
+                await Task.Yield();
+            }
             if (!AuthenticationService.Instance.IsSignedIn)
             {
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
@@ -261,7 +297,6 @@ namespace VastMetaverseNetworking
             {
                 IList<string> joinedSessions = await MultiplayerService.Instance.GetJoinedSessionIdsAsync();
                 if (joinedSessions == null || joinedSessions.Count == 0) return;
-
                 foreach (string staleSessionId in joinedSessions)
                 {
                     try
@@ -269,9 +304,7 @@ namespace VastMetaverseNetworking
                         ISession staleSession = await MultiplayerService.Instance.ReconnectToSessionAsync(staleSessionId);
                         await staleSession.LeaveAsync();
                     }
-                    catch
-                    {
-                    }
+                    catch { }
                 }
             }
             catch (Exception e)
@@ -297,43 +330,15 @@ namespace VastMetaverseNetworking
             if (_useDistributedAuthority) options.WithDistributedAuthorityNetwork();
             else options.WithRelayNetwork();
 
-            ForceWebSocketsInNetworkOptions(options);
+            options.WithNetworkOptions(new NetworkOptions { RelayProtocol = RelayProtocol.WSS });
             return options;
         }
 
-        private static void ForceWebSocketsInNetworkOptions(object optionsObj)
+        private JoinSessionOptions BuildJoinSessionOptions()
         {
-            if (NetworkManager.Singleton != null)
-            {
-                UnityTransport utp = NetworkManager.Singleton.GetComponent<UnityTransport>();
-                if (utp != null) utp.UseWebSockets = true;
-            }
-
-            if (optionsObj == null) return;
-            try
-            {
-                Type t = optionsObj.GetType();
-                PropertyInfo netOptsProp = t.GetProperty("NetworkOptions", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                object netOpts = netOptsProp?.GetValue(optionsObj);
-                if (netOpts != null)
-                {
-                    PropertyInfo useWsProp = netOpts.GetType().GetProperty("UseWebSockets", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (useWsProp != null && useWsProp.CanWrite)
-                    {
-                        useWsProp.SetValue(netOpts, true);
-                    }
-                    FieldInfo useWsField = netOpts.GetType().GetField("<UseWebSockets>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)
-                                        ?? netOpts.GetType().GetField("m_UseWebSockets", BindingFlags.Instance | BindingFlags.NonPublic)
-                                        ?? netOpts.GetType().GetField("UseWebSockets", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (useWsField != null)
-                    {
-                        useWsField.SetValue(netOpts, true);
-                    }
-                }
-            }
-            catch
-            {
-            }
+            JoinSessionOptions joinOptions = new JoinSessionOptions();
+            joinOptions.WithNetworkOptions(new NetworkOptions { RelayProtocol = RelayProtocol.WSS });
+            return joinOptions;
         }
 
         private async Task<ISession> ConnectWithRecycleFallbackAsync(string baseRoomKey)
@@ -344,22 +349,19 @@ namespace VastMetaverseNetworking
                 {
                     FilterOptions = new List<FilterOption>
                     {
-                        new FilterOption(FilterField.StringIndex1, baseRoomKey, FilterOperation.Equal),
-                        new FilterOption(FilterField.AvailableSlots, "1", FilterOperation.GreaterOrEqual)
+                        new(FilterField.StringIndex1, baseRoomKey, FilterOperation.Equal),
+                        new(FilterField.AvailableSlots, "1", FilterOperation.GreaterOrEqual)
                     }
                 };
-
                 QuerySessionsResults results = await MultiplayerService.Instance.QuerySessionsAsync(queryOptions);
                 if (results != null && results.Sessions != null)
                 {
                     foreach (ISessionInfo sessionInfo in results.Sessions)
                     {
                         if (sessionInfo.MaxPlayers - sessionInfo.AvailableSlots <= 0) continue;
-
                         try
                         {
-                            JoinSessionOptions joinOpts = new JoinSessionOptions();
-                            ForceWebSocketsInNetworkOptions(joinOpts);
+                            JoinSessionOptions joinOpts = BuildJoinSessionOptions();
                             return await MultiplayerService.Instance.JoinSessionByIdAsync(sessionInfo.Id, joinOpts);
                         }
                         catch (Exception joinByIdEx)
@@ -379,7 +381,6 @@ namespace VastMetaverseNetworking
             {
                 string candidateSessionId = attempt == 0 ? baseRoomKey : $"{baseRoomKey}_{attempt}";
                 SessionOptions options = BuildSessionOptions(candidateSessionId, baseRoomKey);
-
                 try
                 {
                     return await MultiplayerService.Instance.CreateOrJoinSessionAsync(candidateSessionId, options);
@@ -404,13 +405,19 @@ namespace VastMetaverseNetworking
             }
         }
 
-        private void HandleServerStarted()
+        private void HandleNetworkStarted()
         {
-            if (NetworkManager.Singleton == null) return;
+            TrySpawnSceneSyncManager();
+        }
+
+        private void TrySpawnSceneSyncManager()
+        {
+            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening) return;
+            if (_sceneSyncManagerPrefab == null || SceneObjectSyncManager.Instance != null) return;
+
             bool canSpawnSceneSync = NetworkManager.Singleton.IsServer ||
                                      (_useDistributedAuthority && _currentSession != null && _currentSession.IsHost);
-
-            if (canSpawnSceneSync && _sceneSyncManagerPrefab != null && SceneObjectSyncManager.Instance == null)
+            if (canSpawnSceneSync)
             {
                 SceneObjectSyncManager syncMgr = Instantiate(_sceneSyncManagerPrefab);
                 syncMgr.NetworkObject.Spawn();
@@ -419,10 +426,7 @@ namespace VastMetaverseNetworking
 
         private void HandleClientStopped(bool _)
         {
-            if (!_isConnecting && _joinButton != null)
-            {
-                _joinButton.SetActive(true);
-            }
+            if (!_isConnecting && _joinButton != null) _joinButton.SetActive(true);
         }
 
         private void HandleRemovedFromSession()
@@ -448,10 +452,11 @@ namespace VastMetaverseNetworking
                     _hasPendingTransform = true;
                 }
                 Collider[] oldCols = MetaverseManager.LocalPlayer.GetComponentsInChildren<Collider>(true);
-                foreach (Collider col in oldCols) col.enabled = false;
-                MetaverseManager.LocalPlayer.gameObject.SetActive(false);
+                foreach (Collider col in oldCols)
+                {
+                    col.enabled = false;
+                }
             }
-
             if (_hasPendingTransform)
             {
                 netPlayerController.TeleportTo(_pendingSpawnPos, _pendingSpawnRot);
@@ -474,7 +479,6 @@ namespace VastMetaverseNetworking
                 catch { }
                 _currentSession = null;
             }
-
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 NetworkManager.Singleton.Shutdown();
@@ -494,7 +498,8 @@ namespace VastMetaverseNetworking
         {
             if (NetworkManager.Singleton != null)
             {
-                NetworkManager.Singleton.OnServerStarted -= HandleServerStarted;
+                NetworkManager.Singleton.OnServerStarted -= HandleNetworkStarted;
+                NetworkManager.Singleton.OnClientStarted -= HandleNetworkStarted;
                 NetworkManager.Singleton.OnClientStopped -= HandleClientStopped;
             }
             if (_currentSession != null)

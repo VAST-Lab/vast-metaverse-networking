@@ -153,28 +153,25 @@ namespace VastMetaverseNetworking
             _syncedStates[index] = state;
 
             NetworkSyncedObject obj = _sceneObjects[index];
-            if (obj != null)
-            {
-                obj.SetNetworkState(true, requesterClientId == NetworkManager.Singleton.LocalClientId);
-            }
+            if (obj != null) obj.SetNetworkState(true, requesterClientId == NetworkManager.Singleton.LocalClientId);
         }
 
         [Rpc(SendTo.Everyone)]
         private void SyncEntryStateRpc(int index, ulong ownerClientId, Vector3 position, Quaternion rotation)
         {
             if (index < 0 || index >= _syncedStates.Count || index >= _sceneObjects.Count) return;
-
             SceneSyncEntryState state = _syncedStates[index];
             state.OwnerClientId = ownerClientId;
             state.Position = position;
             state.Rotation = rotation;
             _syncedStates[index] = state;
-
             NetworkSyncedObject obj = _sceneObjects[index];
+
             if (obj != null)
             {
                 bool isLocalOwner = ownerClientId == NetworkManager.Singleton.LocalClientId;
                 obj.SetNetworkState(true, isLocalOwner);
+                if (!isLocalOwner) obj.transform.SetPositionAndRotation(position, rotation);
             }
         }
 
