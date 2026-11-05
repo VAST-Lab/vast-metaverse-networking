@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
+using Unity.Networking.Transport.Relay;
 using Unity.Services.Authentication;
 using Unity.Services.Core;
 using Unity.Services.Lobbies;
@@ -50,10 +51,7 @@ namespace VastMetaverseNetworking
             }
             Instance = this;
             EnsureNetworkManagerExists();
-            if (_startNetworked)
-            {
-                MetaverseManager.DeferInitialPlayerSpawn = true;
-            }
+            if (_startNetworked) MetaverseManager.DeferInitialPlayerSpawn = true;
         }
 
         private async void Start()
@@ -113,10 +111,7 @@ namespace VastMetaverseNetworking
             RegisterNetworkPrefabs(netManager);
             netManagerObj.SetActive(true);
 
-            if (NetworkManager.Singleton == null)
-            {
-                netManager.SetSingleton();
-            }
+            if (NetworkManager.Singleton == null) netManager.SetSingleton();
         }
 
         private void RegisterNetworkPrefabs(NetworkManager netManager)
@@ -147,10 +142,7 @@ namespace VastMetaverseNetworking
         public async void JoinLobbyNow()
         {
             if (_isConnecting || IsConnected) return;
-            if (_joinButton != null)
-            {
-                _joinButton.SetActive(false);
-            }
+            if (_joinButton != null) _joinButton.SetActive(false);
             await JoinOrCreateLobbyAsync();
         }
 
@@ -184,8 +176,10 @@ namespace VastMetaverseNetworking
                 NetworkManager.Singleton.OnServerStarted += HandleServerStarted;
                 NetworkManager.Singleton.OnClientDisconnectCallback -= HandleClientDisconnected;
                 NetworkManager.Singleton.OnClientDisconnectCallback += HandleClientDisconnected;
-                NetworkManager.Singleton.OnClientStopped -= HandleClientStopped;
-                NetworkManager.Singleton.OnClientStopped += HandleClientStopped;
+                NetworkManager.Singleton.OnClientStopped -= HandleClientOrServerStopped;
+                NetworkManager.Singleton.OnClientStopped += HandleClientOrServerStopped;
+                NetworkManager.Singleton.OnServerStopped -= HandleClientOrServerStopped;
+                NetworkManager.Singleton.OnServerStopped += HandleClientOrServerStopped;
 
                 string baseRoomKey = SanitizeSessionKey($"{_sessionName}_{SceneManager.GetActiveScene().name}");
                 await ExecuteMatchmakingAsync(baseRoomKey);
@@ -204,14 +198,8 @@ namespace VastMetaverseNetworking
             {
                 Debug.LogError($"[SceneNetworkManager] Failed to join lobby: {e}");
                 await DisconnectAsync();
-                if (MetaverseManager.LocalPlayer == null && MetaverseManager.Instance != null)
-                {
-                    MetaverseManager.Instance.SpawnSingleplayer();
-                }
-                if (_joinButton != null)
-                {
-                    _joinButton.SetActive(true);
-                }
+                if (_joinButton != null) _joinButton.SetActive(true);
+                MetaverseManager.SpawnSingleplayerIfNull();
             }
             finally
             {
@@ -311,7 +299,17 @@ namespace VastMetaverseNetworking
 			transport.SetRelayServerData(allocation.ToRelayServerData("wss"));
 #else
             transport.UseWebSockets = false;
-            transport.SetRelayServerData(allocation.ToRelayServerData("dtls"));
+            //var relayServerData = allocation.ToRelayServerData(connectionType: "dtls");
+            RelayServerData relayServerData = new RelayServerData(
+                allocation.RelayServer.IpV4,
+                (ushort)allocation.RelayServer.Port,
+                allocation.AllocationIdBytes,
+                allocation.ConnectionData,
+                allocation.ConnectionData,
+                allocation.Key,
+                false // set to true if using explicit DTLS/TLS secure endpoints
+            );
+            transport.SetRelayServerData(relayServerData);
 #endif
             NetworkManager.Singleton.NetworkConfig.NetworkTransport = transport;
 
@@ -414,14 +412,16 @@ namespace VastMetaverseNetworking
             if (NetworkManager.Singleton != null && clientId == NetworkManager.Singleton.LocalClientId)
             {
                 _ = DisconnectAsync();
+                MetaverseManager.SpawnSingleplayerIfNull();
             }
         }
 
-        private void HandleClientStopped(bool _)
+        private void HandleClientOrServerStopped(bool _)
         {
-            if (!_isConnecting && _joinButton != null)
+            if (!_isConnecting)
             {
-                _joinButton.SetActive(true);
+                if (_joinButton != null) _joinButton.SetActive(true);
+                MetaverseManager.SpawnSingleplayerIfNull();
             }
         }
 
@@ -462,9 +462,7 @@ namespace VastMetaverseNetworking
                 {
                     await LobbyService.Instance.RemovePlayerAsync(idToLeave, AuthenticationService.Instance.PlayerId);
                 }
-                catch
-                {
-                }
+                catch { }
             }
         }
 
@@ -475,10 +473,8 @@ namespace VastMetaverseNetworking
                 NetworkManager.Singleton.Shutdown();
             }
             await LeaveLobbySilentlyAsync();
-            if (_joinButton != null)
-            {
-                _joinButton.SetActive(true);
-            }
+            if (_joinButton != null) _joinButton.SetActive(true);
+            _lobbyId = null;
         }
 
         private void OnApplicationQuit()
@@ -494,8 +490,9 @@ namespace VastMetaverseNetworking
             if (NetworkManager.Singleton != null)
             {
                 NetworkManager.Singleton.OnServerStarted -= HandleServerStarted;
+                NetworkManager.Singleton.OnServerStopped -= HandleClientOrServerStopped;
                 NetworkManager.Singleton.OnClientDisconnectCallback -= HandleClientDisconnected;
-                NetworkManager.Singleton.OnClientStopped -= HandleClientStopped;
+                NetworkManager.Singleton.OnClientStopped -= HandleClientOrServerStopped;
             }
             await DisconnectAsync();
         }

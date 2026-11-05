@@ -296,10 +296,6 @@ PrefabInstance:
       propertyPath: m_AnchorMax.y
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 4102177403620660589, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
-      propertyPath: _playerPrefab
-      value: 
-      objectReference: {fileID: 484781144876683905, guid: c335beefa13e9dd42867985cd0bbfc89, type: 3}
     - target: {fileID: 4251384360139146407, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
       propertyPath: m_AnchorMax.x
       value: 0
@@ -409,7 +405,6 @@ MonoBehaviour:
   _urlMultiplayerParam: multiplayer
   _sessionName: GlobalLobby
   _maxPlayers: 32
-  _useDistributedAuthority: 1
   _joinButton: {fileID: 8323601843143002627}
   _networkedPlayerPrefab: {fileID: -3250832497951320783, guid: c335beefa13e9dd42867985cd0bbfc89, type: 3}
   _sceneSyncManagerPrefab: {fileID: 1957154461362358291, guid: 26895b93dc985bd4bace03a89e7ed434, type: 3}
