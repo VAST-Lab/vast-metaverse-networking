@@ -154,13 +154,19 @@ namespace VastMetaverseNetworking
 
         private void HandleLocalJump()
         {
-            TriggerJumpRpc();
+            TriggerJumpServerRpc();
         }
 
-        [Rpc(SendTo.NotMe)]
-        private void TriggerJumpRpc()
+        [Rpc(SendTo.Server)]
+        private void TriggerJumpServerRpc()
         {
-            if (_playerController.AnimController != null)
+            TriggerJumpClientRpc();
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void TriggerJumpClientRpc()
+        {
+            if (!IsOwner && _playerController.AnimController != null)
             {
                 _playerController.AnimController.Jump();
             }

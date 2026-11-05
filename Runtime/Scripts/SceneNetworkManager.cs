@@ -5,7 +5,10 @@ using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Authentication;
 using Unity.Services.Core;
-using Unity.Services.Multiplayer;
+using Unity.Services.Lobbies;
+using Unity.Services.Lobbies.Models;
+using Unity.Services.Relay;
+using Unity.Services.Relay.Models;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using VastMetaverseTools.Managers;
@@ -13,27 +16,6 @@ using VastMetaverseTools.Player;
 
 namespace VastMetaverseNetworking
 {
-    public class WebSocketUnityTransport : UnityTransport
-    {
-        public override void Initialize(NetworkManager networkManager = null)
-        {
-            UseWebSockets = true;
-            base.Initialize(networkManager);
-        }
-
-        public override bool StartClient()
-        {
-            UseWebSockets = true;
-            return base.StartClient();
-        }
-
-        public override bool StartServer()
-        {
-            UseWebSockets = true;
-            return base.StartServer();
-        }
-    }
-
     public class SceneNetworkManager : MonoBehaviour
     {
         public static SceneNetworkManager Instance { get; private set; }
@@ -42,7 +24,6 @@ namespace VastMetaverseNetworking
         [SerializeField] private string _urlMultiplayerParam = "multiplayer";
         [SerializeField] private string _sessionName = "GlobalLobby";
         [SerializeField] private int _maxPlayers = 16;
-        [SerializeField] private bool _useDistributedAuthority = true;
         [SerializeField] private GameObject _joinButton;
 
         [Header("Prefabs")]
@@ -50,13 +31,15 @@ namespace VastMetaverseNetworking
         [SerializeField] private SceneObjectSyncManager _sceneSyncManagerPrefab;
         [SerializeField] private MetaverseVoiceManager _voiceManager;
 
-        private ISession _currentSession;
+        private string _lobbyId;
+        private float _heartbeatTimer;
         private bool _isConnecting;
+        private bool _servicesInitialized;
         private Vector3 _pendingSpawnPos;
         private Quaternion _pendingSpawnRot;
         private bool _hasPendingTransform;
 
-        public bool IsConnected => _currentSession != null && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+        public bool IsConnected => !string.IsNullOrEmpty(_lobbyId) && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
 
         private void Awake()
         {
@@ -67,32 +50,48 @@ namespace VastMetaverseNetworking
             }
             Instance = this;
             EnsureNetworkManagerExists();
-            if (_startNetworked) MetaverseManager.DeferInitialPlayerSpawn = true;
+            if (_startNetworked)
+            {
+                MetaverseManager.DeferInitialPlayerSpawn = true;
+            }
         }
 
         private async void Start()
         {
-            if (_joinButton != null) _joinButton.SetActive(!_startNetworked);
-            if (_startNetworked) await JoinOrCreateLobbyAsync();
+            if (_joinButton != null)
+            {
+                _joinButton.SetActive(!_startNetworked);
+            }
+            if (_startNetworked)
+            {
+                await JoinOrCreateLobbyAsync();
+            }
+        }
+
+        private void Update()
+        {
+            if (string.IsNullOrEmpty(_lobbyId) || NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
+
+            _heartbeatTimer += Time.deltaTime;
+            if (_heartbeatTimer >= 15f)
+            {
+                _heartbeatTimer = 0f;
+                _ = LobbyService.Instance.SendHeartbeatPingAsync(_lobbyId);
+            }
         }
 
         private void EnsureNetworkManagerExists()
         {
             if (NetworkManager.Singleton != null)
             {
-                UnityTransport existingTransport = NetworkManager.Singleton.GetComponent<UnityTransport>();
-                if (existingTransport != null && !(existingTransport is WebSocketUnityTransport))
+                if (!NetworkManager.Singleton.TryGetComponent(out UnityTransport existingTransport))
                 {
-                    DestroyImmediate(existingTransport);
-                    existingTransport = null;
+                    existingTransport = NetworkManager.Singleton.gameObject.AddComponent<UnityTransport>();
                 }
-                if (existingTransport == null)
+                if (NetworkManager.Singleton.NetworkConfig == null)
                 {
-                    existingTransport = NetworkManager.Singleton.gameObject.AddComponent<WebSocketUnityTransport>();
+                    NetworkManager.Singleton.NetworkConfig = new NetworkConfig();
                 }
-                existingTransport.UseWebSockets = true;
-
-                if (NetworkManager.Singleton.NetworkConfig == null) NetworkManager.Singleton.NetworkConfig = new NetworkConfig();
                 NetworkManager.Singleton.NetworkConfig.NetworkTransport = existingTransport;
                 RegisterNetworkPrefabs(NetworkManager.Singleton);
                 return;
@@ -102,9 +101,7 @@ namespace VastMetaverseNetworking
             netManagerObj.SetActive(false);
             DontDestroyOnLoad(netManagerObj);
 
-            WebSocketUnityTransport transport = netManagerObj.AddComponent<WebSocketUnityTransport>();
-            transport.UseWebSockets = true;
-
+            UnityTransport transport = netManagerObj.AddComponent<UnityTransport>();
             NetworkManager netManager = netManagerObj.AddComponent<NetworkManager>();
             netManager.NetworkConfig = new NetworkConfig
             {
@@ -116,7 +113,10 @@ namespace VastMetaverseNetworking
             RegisterNetworkPrefabs(netManager);
             netManagerObj.SetActive(true);
 
-            if (NetworkManager.Singleton == null) netManager.SetSingleton();
+            if (NetworkManager.Singleton == null)
+            {
+                netManager.SetSingleton();
+            }
         }
 
         private void RegisterNetworkPrefabs(NetworkManager netManager)
@@ -147,7 +147,10 @@ namespace VastMetaverseNetworking
         public async void JoinLobbyNow()
         {
             if (_isConnecting || IsConnected) return;
-            if (_joinButton != null) _joinButton.SetActive(false);
+            if (_joinButton != null)
+            {
+                _joinButton.SetActive(false);
+            }
             await JoinOrCreateLobbyAsync();
         }
 
@@ -155,7 +158,10 @@ namespace VastMetaverseNetworking
         {
             if (_isConnecting || IsConnected) return;
             _isConnecting = true;
-            if (_joinButton != null) _joinButton.SetActive(false);
+            if (_joinButton != null)
+            {
+                _joinButton.SetActive(false);
+            }
 
             try
             {
@@ -174,38 +180,38 @@ namespace VastMetaverseNetworking
                 await InitializeServicesAndAuthAsync();
                 CacheLocalPlayerSpawnTransform();
 
-                NetworkManager.Singleton.OnServerStarted -= HandleNetworkStarted;
-                NetworkManager.Singleton.OnServerStarted += HandleNetworkStarted;
-                NetworkManager.Singleton.OnClientStarted -= HandleNetworkStarted;
-                NetworkManager.Singleton.OnClientStarted += HandleNetworkStarted;
+                NetworkManager.Singleton.OnServerStarted -= HandleServerStarted;
+                NetworkManager.Singleton.OnServerStarted += HandleServerStarted;
+                NetworkManager.Singleton.OnClientDisconnectCallback -= HandleClientDisconnected;
+                NetworkManager.Singleton.OnClientDisconnectCallback += HandleClientDisconnected;
                 NetworkManager.Singleton.OnClientStopped -= HandleClientStopped;
                 NetworkManager.Singleton.OnClientStopped += HandleClientStopped;
 
                 string baseRoomKey = SanitizeSessionKey($"{_sessionName}_{SceneManager.GetActiveScene().name}");
-                await CleanupStaleSessionsAsync();
-
-                _currentSession = await ConnectWithRecycleFallbackAsync(baseRoomKey);
-                _currentSession.RemovedFromSession += HandleRemovedFromSession;
-                _currentSession.Deleted += HandleSessionDeleted;
-
-                TrySpawnSceneSyncManager();
+                await ExecuteMatchmakingAsync(baseRoomKey);
 
                 if (_voiceManager == null)
                 {
                     _voiceManager = FindAnyObjectByType<MetaverseVoiceManager>();
-                    if (_voiceManager == null) _voiceManager = gameObject.AddComponent<MetaverseVoiceManager>();
+                    if (_voiceManager == null)
+                    {
+                        _voiceManager = gameObject.AddComponent<MetaverseVoiceManager>();
+                    }
                 }
                 await _voiceManager.InitializeAndJoinVoiceAsync(baseRoomKey);
             }
             catch (Exception e)
             {
-                Debug.LogError($"[SceneNetworkManager] Failed to join session: {e}");
-                await ForceCleanupFailedConnectionAsync();
+                Debug.LogError($"[SceneNetworkManager] Failed to join lobby: {e}");
+                await DisconnectAsync();
                 if (MetaverseManager.LocalPlayer == null && MetaverseManager.Instance != null)
                 {
                     MetaverseManager.Instance.SpawnSingleplayer();
                 }
-                if (_joinButton != null) _joinButton.SetActive(true);
+                if (_joinButton != null)
+                {
+                    _joinButton.SetActive(true);
+                }
             }
             finally
             {
@@ -217,10 +223,9 @@ namespace VastMetaverseNetworking
         {
             if (UnityServices.State == ServicesInitializationState.Uninitialized)
             {
-                InitializationOptions initOptions = new InitializationOptions();
-                string profileName = GetUniqueProfileName();
-                initOptions.SetProfile(profileName);
-                await UnityServices.InitializeAsync(initOptions);
+                InitializationOptions options = new InitializationOptions();
+                options.SetProfile(GetUniqueProfileName());
+                await UnityServices.InitializeAsync(options);
             }
             while (UnityServices.State == ServicesInitializationState.Initializing)
             {
@@ -230,6 +235,7 @@ namespace VastMetaverseNetworking
             {
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
             }
+            _servicesInitialized = true;
         }
 
         private string GetUniqueProfileName()
@@ -247,6 +253,111 @@ namespace VastMetaverseNetworking
 #else
 			return savedProfile;
 #endif
+        }
+
+        private async Task ExecuteMatchmakingAsync(string roomKey)
+        {
+            QueryLobbiesOptions queryOptions = new QueryLobbiesOptions
+            {
+                Filters = new List<QueryFilter>
+                {
+                    new QueryFilter(QueryFilter.FieldOptions.AvailableSlots, "0", QueryFilter.OpOptions.GT),
+                    new QueryFilter(QueryFilter.FieldOptions.S1, roomKey, QueryFilter.OpOptions.EQ)
+                }
+            };
+
+            QueryResponse queryResponse = await LobbyService.Instance.QueryLobbiesAsync(queryOptions);
+            foreach (Lobby lobby in queryResponse.Results)
+            {
+                if (lobby.Players != null && lobby.Players.Count > 0)
+                {
+                    try
+                    {
+                        await JoinMatchAsync(lobby);
+                        return;
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning($"[SceneNetworkManager] Failed to join lobby {lobby.Id} ({e.Message}). Trying next...");
+                    }
+                }
+            }
+
+            await HostMatchAsync(roomKey);
+        }
+
+        private async Task HostMatchAsync(string roomKey)
+        {
+            Allocation allocation = await RelayService.Instance.CreateAllocationAsync(Mathf.Max(1, _maxPlayers - 1));
+            string joinCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
+
+            CreateLobbyOptions lobbyOptions = new CreateLobbyOptions
+            {
+                IsPrivate = false,
+                Data = new Dictionary<string, DataObject>
+                {
+                    { "JoinCode", new DataObject(DataObject.VisibilityOptions.Member, joinCode) },
+                    { "RoomKey", new DataObject(DataObject.VisibilityOptions.Public, roomKey, DataObject.IndexOptions.S1) }
+                }
+            };
+
+            Lobby lobby = await LobbyService.Instance.CreateLobbyAsync(roomKey, _maxPlayers, lobbyOptions);
+            _lobbyId = lobby.Id;
+            _heartbeatTimer = 0f;
+
+            UnityTransport transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+#if UNITY_WEBGL && !UNITY_EDITOR
+			transport.UseWebSockets = true;
+			transport.SetRelayServerData(allocation.ToRelayServerData("wss"));
+#else
+            transport.UseWebSockets = false;
+            transport.SetRelayServerData(allocation.ToRelayServerData("dtls"));
+#endif
+            NetworkManager.Singleton.NetworkConfig.NetworkTransport = transport;
+
+            if (!NetworkManager.Singleton.StartHost())
+            {
+                throw new Exception("NetworkManager.StartHost() failed.");
+            }
+        }
+
+        private async Task JoinMatchAsync(Lobby lobby)
+        {
+            Lobby joinedLobby = await LobbyService.Instance.JoinLobbyByIdAsync(lobby.Id);
+            _lobbyId = joinedLobby.Id;
+
+            if (joinedLobby.Data == null || !joinedLobby.Data.TryGetValue("JoinCode", out DataObject joinCodeObj) || string.IsNullOrEmpty(joinCodeObj.Value))
+            {
+                await LeaveLobbySilentlyAsync();
+                throw new Exception("Lobby is missing a valid Relay JoinCode.");
+            }
+
+            JoinAllocation joinAllocation;
+            try
+            {
+                joinAllocation = await RelayService.Instance.JoinAllocationAsync(joinCodeObj.Value);
+            }
+            catch
+            {
+                await LeaveLobbySilentlyAsync();
+                throw;
+            }
+
+            UnityTransport transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+#if UNITY_WEBGL && !UNITY_EDITOR
+			transport.UseWebSockets = true;
+			transport.SetRelayServerData(joinAllocation.ToRelayServerData("wss"));
+#else
+            transport.UseWebSockets = false;
+            transport.SetRelayServerData(joinAllocation.ToRelayServerData("dtls"));
+#endif
+            NetworkManager.Singleton.NetworkConfig.NetworkTransport = transport;
+
+            if (!NetworkManager.Singleton.StartClient())
+            {
+                await LeaveLobbySilentlyAsync();
+                throw new Exception("NetworkManager.StartClient() failed.");
+            }
         }
 
         private static string SanitizeSessionKey(string rawKey)
@@ -288,146 +399,30 @@ namespace VastMetaverseNetworking
             return targetPos + Vector3.up * 0.08f;
         }
 
-        private async Task CleanupStaleSessionsAsync()
+        private void HandleServerStarted()
         {
-            try
-            {
-                IList<string> joinedSessions = await MultiplayerService.Instance.GetJoinedSessionIdsAsync();
-                if (joinedSessions == null || joinedSessions.Count == 0) return;
-                foreach (string staleSessionId in joinedSessions)
-                {
-                    try
-                    {
-                        ISession staleSession = await MultiplayerService.Instance.ReconnectToSessionAsync(staleSessionId);
-                        await staleSession.LeaveAsync();
-                    }
-                    catch { }
-                }
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"[SceneNetworkManager] CleanupStaleSessions warning: {e.Message}");
-            }
-        }
-
-        private SessionOptions BuildSessionOptions(string sessionName, string roomTag)
-        {
-            SessionOptions options = new SessionOptions
-            {
-                Name = sessionName,
-                MaxPlayers = _maxPlayers,
-                IsPrivate = false,
-                IsLocked = false,
-                SessionProperties = new Dictionary<string, SessionProperty>
-                {
-                    { "RoomTag", new SessionProperty(roomTag, VisibilityPropertyOptions.Public, PropertyIndex.String1) }
-                }
-            };
-
-            if (_useDistributedAuthority) options.WithDistributedAuthorityNetwork();
-            else options.WithRelayNetwork();
-
-            return options;
-        }
-
-        private async Task<ISession> ConnectWithRecycleFallbackAsync(string baseRoomKey)
-        {
-            try
-            {
-                QuerySessionsOptions queryOptions = new QuerySessionsOptions
-                {
-                    FilterOptions = new List<FilterOption>
-                    {
-                        new(FilterField.StringIndex1, baseRoomKey, FilterOperation.Equal),
-                        new(FilterField.AvailableSlots, "1", FilterOperation.GreaterOrEqual)
-                    }
-                };
-                QuerySessionsResults results = await MultiplayerService.Instance.QuerySessionsAsync(queryOptions);
-                if (results != null && results.Sessions != null)
-                {
-                    foreach (ISessionInfo sessionInfo in results.Sessions)
-                    {
-                        if (sessionInfo.MaxPlayers - sessionInfo.AvailableSlots <= 0) continue;
-                        try
-                        {
-                            JoinSessionOptions joinOpts = new JoinSessionOptions();
-                            return await MultiplayerService.Instance.JoinSessionByIdAsync(sessionInfo.Id, joinOpts);
-                        }
-                        catch (Exception joinByIdEx)
-                        {
-                            Debug.LogWarning($"[SceneNetworkManager] Active session {sessionInfo.Id} was unreachable ({joinByIdEx.Message}). Trying fallback...");
-                        }
-                    }
-                }
-            }
-            catch (Exception queryEx)
-            {
-                Debug.LogWarning($"[SceneNetworkManager] QuerySessions warning: {queryEx.Message}");
-            }
-
-            Exception lastException = null;
-            for (int attempt = 0; attempt < 3; attempt++)
-            {
-                string candidateSessionId = attempt == 0 ? baseRoomKey : $"{baseRoomKey}_{attempt}";
-                SessionOptions options = BuildSessionOptions(candidateSessionId, baseRoomKey);
-                try
-                {
-                    return await MultiplayerService.Instance.CreateOrJoinSessionAsync(candidateSessionId, options);
-                }
-                catch (Exception ex)
-                {
-                    lastException = ex;
-                    Debug.LogWarning($"[SceneNetworkManager] Slot '{candidateSessionId}' unavailable or recycling ({ex.Message}). Trying next slot...");
-                    await CleanupStaleSessionsAsync();
-                    await Task.Delay(300);
-                }
-            }
-
-            SessionOptions fallbackOptions = BuildSessionOptions(baseRoomKey, baseRoomKey);
-            try
-            {
-                return await MultiplayerService.Instance.CreateSessionAsync(fallbackOptions);
-            }
-            catch
-            {
-                throw lastException ?? new Exception("Unable to create or join any session slot.");
-            }
-        }
-
-        private void HandleNetworkStarted()
-        {
-            TrySpawnSceneSyncManager();
-        }
-
-        private void TrySpawnSceneSyncManager()
-        {
-            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening) return;
-            if (_sceneSyncManagerPrefab == null || SceneObjectSyncManager.Instance != null) return;
-
-            bool canSpawnSceneSync = NetworkManager.Singleton.IsServer ||
-                                     (_useDistributedAuthority && _currentSession != null && _currentSession.IsHost);
-            if (canSpawnSceneSync)
+            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
+            if (_sceneSyncManagerPrefab != null && SceneObjectSyncManager.Instance == null)
             {
                 SceneObjectSyncManager syncMgr = Instantiate(_sceneSyncManagerPrefab);
                 syncMgr.NetworkObject.Spawn();
             }
         }
 
+        private void HandleClientDisconnected(ulong clientId)
+        {
+            if (NetworkManager.Singleton != null && clientId == NetworkManager.Singleton.LocalClientId)
+            {
+                _ = DisconnectAsync();
+            }
+        }
+
         private void HandleClientStopped(bool _)
         {
-            if (!_isConnecting && _joinButton != null) _joinButton.SetActive(true);
-        }
-
-        private void HandleRemovedFromSession()
-        {
-            _currentSession = null;
-            if (_joinButton != null) _joinButton.SetActive(true);
-        }
-
-        private void HandleSessionDeleted()
-        {
-            _currentSession = null;
-            if (_joinButton != null) _joinButton.SetActive(true);
+            if (!_isConnecting && _joinButton != null)
+            {
+                _joinButton.SetActive(true);
+            }
         }
 
         public void ConfigureSpawnedLocalPlayer(PlayerController netPlayerController)
@@ -457,29 +452,40 @@ namespace VastMetaverseNetworking
             }
         }
 
-        private async Task ForceCleanupFailedConnectionAsync()
+        private async Task LeaveLobbySilentlyAsync()
         {
-            if (_currentSession != null)
+            if (!string.IsNullOrEmpty(_lobbyId) && _servicesInitialized && AuthenticationService.Instance.IsSignedIn)
             {
+                string idToLeave = _lobbyId;
+                _lobbyId = null;
                 try
                 {
-                    await _currentSession.LeaveAsync();
+                    await LobbyService.Instance.RemovePlayerAsync(idToLeave, AuthenticationService.Instance.PlayerId);
                 }
-                catch { }
-                _currentSession = null;
+                catch
+                {
+                }
             }
+        }
+
+        private async Task DisconnectAsync()
+        {
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 NetworkManager.Singleton.Shutdown();
+            }
+            await LeaveLobbySilentlyAsync();
+            if (_joinButton != null)
+            {
+                _joinButton.SetActive(true);
             }
         }
 
         private void OnApplicationQuit()
         {
-            if (_currentSession != null)
+            if (_servicesInitialized)
             {
-                _ = _currentSession.LeaveAsync();
-                _currentSession = null;
+                _ = DisconnectAsync();
             }
         }
 
@@ -487,21 +493,11 @@ namespace VastMetaverseNetworking
         {
             if (NetworkManager.Singleton != null)
             {
-                NetworkManager.Singleton.OnServerStarted -= HandleNetworkStarted;
-                NetworkManager.Singleton.OnClientStarted -= HandleNetworkStarted;
+                NetworkManager.Singleton.OnServerStarted -= HandleServerStarted;
+                NetworkManager.Singleton.OnClientDisconnectCallback -= HandleClientDisconnected;
                 NetworkManager.Singleton.OnClientStopped -= HandleClientStopped;
             }
-            if (_currentSession != null)
-            {
-                _currentSession.RemovedFromSession -= HandleRemovedFromSession;
-                _currentSession.Deleted -= HandleSessionDeleted;
-                try
-                {
-                    await _currentSession.LeaveAsync();
-                }
-                catch { }
-                _currentSession = null;
-            }
+            await DisconnectAsync();
         }
     }
 }

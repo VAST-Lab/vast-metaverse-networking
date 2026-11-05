@@ -8,7 +8,8 @@
         "VastMetaverseTools.Runtime",
         "Unity.Services.Vivox",
         "Unity.Services.Multiplayer",
-        "Unity.Services.Core"
+        "Unity.Services.Core",
+        "Unity.Networking.Transport"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

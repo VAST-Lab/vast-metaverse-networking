@@ -197,17 +197,15 @@ namespace VastMetaverseNetworking
                             state.Position = obj.transform.position;
                             state.Rotation = obj.transform.rotation;
                             _syncedStates[i] = state;
-                            UpdateTransformRpc(i, state.Position, state.Rotation);
+                            UpdateTransformServerRpc(i, state.Position, state.Rotation);
                         }
                     }
                 }
             }
-
             for (int i = 0; i < _syncedStates.Count && i < _sceneObjects.Count; i++)
             {
                 NetworkSyncedObject obj = _sceneObjects[i];
                 if (obj == null || !obj.SyncTransform) continue;
-
                 SceneSyncEntryState state = _syncedStates[i];
                 if (state.OwnerClientId != localClientId && state.OwnerClientId != ulong.MaxValue)
                 {
@@ -218,11 +216,18 @@ namespace VastMetaverseNetworking
             }
         }
 
-        [Rpc(SendTo.NotMe)]
-        private void UpdateTransformRpc(int index, Vector3 position, Quaternion rotation)
+        [Rpc(SendTo.Server)]
+        private void UpdateTransformServerRpc(int index, Vector3 position, Quaternion rotation)
+        {
+            UpdateTransformClientRpc(index, position, rotation);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void UpdateTransformClientRpc(int index, Vector3 position, Quaternion rotation)
         {
             if (index < 0 || index >= _syncedStates.Count) return;
             SceneSyncEntryState state = _syncedStates[index];
+            if (state.OwnerClientId == NetworkManager.Singleton.LocalClientId) return;
             state.Position = position;
             state.Rotation = rotation;
             _syncedStates[index] = state;
