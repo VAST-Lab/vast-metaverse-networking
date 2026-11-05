@@ -308,6 +308,10 @@ PrefabInstance:
       propertyPath: m_AnchorMax.y
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 5327543040060056622, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
+      propertyPath: m_fontAsset
+      value: 
+      objectReference: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
     - target: {fileID: 5610708435281644892, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
       propertyPath: m_AnchorMax.x
       value: 0
@@ -316,6 +320,10 @@ PrefabInstance:
       propertyPath: m_AnchorMax.y
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 5663874588545473377, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
+      propertyPath: m_fontAsset
+      value: 
+      objectReference: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
     - target: {fileID: 6395169519795546222, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
       propertyPath: m_LocalPosition.x
       value: -1.4997
@@ -356,6 +364,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 7941521211037066524, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
+      propertyPath: m_fontAsset
+      value: 
+      objectReference: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
     - target: {fileID: 8630772456879371013, guid: ea83aa1d7e83d11448cf65d0f2db526b, type: 3}
       propertyPath: m_Name
       value: PF_MetaverseNetworkedPackage

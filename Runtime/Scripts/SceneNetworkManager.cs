@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading.Tasks;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
@@ -13,6 +14,26 @@ using VastMetaverseTools.Player;
 
 namespace VastMetaverseNetworking
 {
+    [DefaultExecutionOrder(-1000)]
+    public class WebSocketTransportEnforcer : MonoBehaviour
+    {
+        private UnityTransport _transport;
+
+        public void Initialize(UnityTransport transport)
+        {
+            _transport = transport;
+            if (_transport != null) _transport.UseWebSockets = true;
+        }
+
+        private void Update()
+        {
+            if (_transport != null && !_transport.UseWebSockets)
+            {
+                _transport.UseWebSockets = true;
+            }
+        }
+    }
+
     public class SceneNetworkManager : MonoBehaviour
     {
         public static SceneNetworkManager Instance { get; private set; }
@@ -60,7 +81,11 @@ namespace VastMetaverseNetworking
             if (NetworkManager.Singleton != null)
             {
                 UnityTransport existingTransport = NetworkManager.Singleton.GetComponent<UnityTransport>();
-                if (existingTransport != null) existingTransport.UseWebSockets = true;
+                if (existingTransport != null)
+                {
+                    existingTransport.UseWebSockets = true;
+                    EnsureWebSocketEnforcer(existingTransport);
+                }
                 if (_networkedPlayerPrefab != null && NetworkManager.Singleton.NetworkConfig.PlayerPrefab == null)
                 {
                     NetworkManager.Singleton.NetworkConfig.PlayerPrefab = _networkedPlayerPrefab.gameObject;
@@ -73,6 +98,7 @@ namespace VastMetaverseNetworking
 
             UnityTransport transport = netManagerObj.AddComponent<UnityTransport>();
             transport.UseWebSockets = true;
+            EnsureWebSocketEnforcer(transport);
 
             NetworkManager netManager = netManagerObj.AddComponent<NetworkManager>();
             netManager.NetworkConfig = new NetworkConfig
@@ -81,6 +107,14 @@ namespace VastMetaverseNetworking
                 PlayerPrefab = _networkedPlayerPrefab != null ? _networkedPlayerPrefab.gameObject : null,
                 EnableSceneManagement = false
             };
+        }
+
+        private static void EnsureWebSocketEnforcer(UnityTransport transport)
+        {
+            if (transport == null) return;
+            WebSocketTransportEnforcer enforcer = transport.GetComponent<WebSocketTransportEnforcer>();
+            if (enforcer == null) enforcer = transport.gameObject.AddComponent<WebSocketTransportEnforcer>();
+            enforcer.Initialize(transport);
         }
 
         public async void JoinLobbyNow()
@@ -110,7 +144,7 @@ namespace VastMetaverseNetworking
                 }
 
                 await InitializeServicesAndAuthAsync();
-                CacheAndPrepareLocalPlayerSpawn();
+                CacheLocalPlayerSpawnTransform();
 
                 NetworkManager.Singleton.OnServerStarted -= HandleServerStarted;
                 NetworkManager.Singleton.OnServerStarted += HandleServerStarted;
@@ -139,10 +173,6 @@ namespace VastMetaverseNetworking
                 if (MetaverseManager.LocalPlayer == null && MetaverseManager.Instance != null)
                 {
                     MetaverseManager.Instance.SpawnSingleplayer();
-                }
-                else if (MetaverseManager.LocalPlayer != null)
-                {
-                    MetaverseManager.LocalPlayer.gameObject.SetActive(true);
                 }
 
                 if (_joinButton != null) _joinButton.SetActive(true);
@@ -199,17 +229,13 @@ namespace VastMetaverseNetworking
             return new string(arr);
         }
 
-        private void CacheAndPrepareLocalPlayerSpawn()
+        private void CacheLocalPlayerSpawnTransform()
         {
             if (MetaverseManager.LocalPlayer != null)
             {
                 _pendingSpawnPos = GetSafeGroundPosition(MetaverseManager.LocalPlayer.transform.position);
                 _pendingSpawnRot = MetaverseManager.LocalPlayer.transform.rotation;
                 _hasPendingTransform = true;
-
-                Collider[] cols = MetaverseManager.LocalPlayer.GetComponentsInChildren<Collider>(true);
-                foreach (Collider col in cols) col.enabled = false;
-                MetaverseManager.LocalPlayer.gameObject.SetActive(false);
             }
             else if (MetaverseManager.Instance != null)
             {
@@ -271,7 +297,43 @@ namespace VastMetaverseNetworking
             if (_useDistributedAuthority) options.WithDistributedAuthorityNetwork();
             else options.WithRelayNetwork();
 
+            ForceWebSocketsInNetworkOptions(options);
             return options;
+        }
+
+        private static void ForceWebSocketsInNetworkOptions(object optionsObj)
+        {
+            if (NetworkManager.Singleton != null)
+            {
+                UnityTransport utp = NetworkManager.Singleton.GetComponent<UnityTransport>();
+                if (utp != null) utp.UseWebSockets = true;
+            }
+
+            if (optionsObj == null) return;
+            try
+            {
+                Type t = optionsObj.GetType();
+                PropertyInfo netOptsProp = t.GetProperty("NetworkOptions", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                object netOpts = netOptsProp?.GetValue(optionsObj);
+                if (netOpts != null)
+                {
+                    PropertyInfo useWsProp = netOpts.GetType().GetProperty("UseWebSockets", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (useWsProp != null && useWsProp.CanWrite)
+                    {
+                        useWsProp.SetValue(netOpts, true);
+                    }
+                    FieldInfo useWsField = netOpts.GetType().GetField("<UseWebSockets>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)
+                                        ?? netOpts.GetType().GetField("m_UseWebSockets", BindingFlags.Instance | BindingFlags.NonPublic)
+                                        ?? netOpts.GetType().GetField("UseWebSockets", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (useWsField != null)
+                    {
+                        useWsField.SetValue(netOpts, true);
+                    }
+                }
+            }
+            catch
+            {
+            }
         }
 
         private async Task<ISession> ConnectWithRecycleFallbackAsync(string baseRoomKey)
@@ -296,7 +358,9 @@ namespace VastMetaverseNetworking
 
                         try
                         {
-                            return await MultiplayerService.Instance.JoinSessionByIdAsync(sessionInfo.Id);
+                            JoinSessionOptions joinOpts = new JoinSessionOptions();
+                            ForceWebSocketsInNetworkOptions(joinOpts);
+                            return await MultiplayerService.Instance.JoinSessionByIdAsync(sessionInfo.Id, joinOpts);
                         }
                         catch (Exception joinByIdEx)
                         {
@@ -375,6 +439,19 @@ namespace VastMetaverseNetworking
 
         public void ConfigureSpawnedLocalPlayer(PlayerController netPlayerController)
         {
+            if (MetaverseManager.LocalPlayer != null && MetaverseManager.LocalPlayer != netPlayerController)
+            {
+                if (!_hasPendingTransform)
+                {
+                    _pendingSpawnPos = GetSafeGroundPosition(MetaverseManager.LocalPlayer.transform.position);
+                    _pendingSpawnRot = MetaverseManager.LocalPlayer.transform.rotation;
+                    _hasPendingTransform = true;
+                }
+                Collider[] oldCols = MetaverseManager.LocalPlayer.GetComponentsInChildren<Collider>(true);
+                foreach (Collider col in oldCols) col.enabled = false;
+                MetaverseManager.LocalPlayer.gameObject.SetActive(false);
+            }
+
             if (_hasPendingTransform)
             {
                 netPlayerController.TeleportTo(_pendingSpawnPos, _pendingSpawnRot);
