@@ -13,20 +13,24 @@ using VastMetaverseTools.Player;
 
 namespace VastMetaverseNetworking
 {
-    [DefaultExecutionOrder(-1000)]
-    public class WebSocketTransportEnforcer : MonoBehaviour
+    public class WebSocketUnityTransport : UnityTransport
     {
-        private UnityTransport _transport;
-
-        public void Initialize(UnityTransport transport)
+        public override void Initialize(NetworkManager networkManager = null)
         {
-            _transport = transport;
-            if (_transport != null) _transport.UseWebSockets = true;
+            UseWebSockets = true;
+            base.Initialize(networkManager);
         }
 
-        private void Update()
+        public override bool StartClient()
         {
-            if (_transport != null && !_transport.UseWebSockets) _transport.UseWebSockets = true;
+            UseWebSockets = true;
+            return base.StartClient();
+        }
+
+        public override bool StartServer()
+        {
+            UseWebSockets = true;
+            return base.StartServer();
         }
     }
 
@@ -77,12 +81,16 @@ namespace VastMetaverseNetworking
             if (NetworkManager.Singleton != null)
             {
                 UnityTransport existingTransport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+                if (existingTransport != null && !(existingTransport is WebSocketUnityTransport))
+                {
+                    DestroyImmediate(existingTransport);
+                    existingTransport = null;
+                }
                 if (existingTransport == null)
                 {
-                    existingTransport = NetworkManager.Singleton.gameObject.AddComponent<UnityTransport>();
+                    existingTransport = NetworkManager.Singleton.gameObject.AddComponent<WebSocketUnityTransport>();
                 }
                 existingTransport.UseWebSockets = true;
-                EnsureWebSocketEnforcer(existingTransport);
 
                 if (NetworkManager.Singleton.NetworkConfig == null) NetworkManager.Singleton.NetworkConfig = new NetworkConfig();
                 NetworkManager.Singleton.NetworkConfig.NetworkTransport = existingTransport;
@@ -94,9 +102,8 @@ namespace VastMetaverseNetworking
             netManagerObj.SetActive(false);
             DontDestroyOnLoad(netManagerObj);
 
-            UnityTransport transport = netManagerObj.AddComponent<UnityTransport>();
+            WebSocketUnityTransport transport = netManagerObj.AddComponent<WebSocketUnityTransport>();
             transport.UseWebSockets = true;
-            EnsureWebSocketEnforcer(transport);
 
             NetworkManager netManager = netManagerObj.AddComponent<NetworkManager>();
             netManager.NetworkConfig = new NetworkConfig
@@ -135,16 +142,6 @@ namespace VastMetaverseNetworking
             {
                 netManager.NetworkConfig.Prefabs.Add(new NetworkPrefab { Prefab = prefab });
             }
-        }
-
-        private static void EnsureWebSocketEnforcer(UnityTransport transport)
-        {
-            if (transport == null) return;
-            if (!transport.TryGetComponent<WebSocketTransportEnforcer>(out var enforcer))
-            {
-                enforcer = transport.gameObject.AddComponent<WebSocketTransportEnforcer>();
-            }
-            enforcer.Initialize(transport);
         }
 
         public async void JoinLobbyNow()
@@ -330,15 +327,7 @@ namespace VastMetaverseNetworking
             if (_useDistributedAuthority) options.WithDistributedAuthorityNetwork();
             else options.WithRelayNetwork();
 
-            options.WithNetworkOptions(new NetworkOptions { RelayProtocol = RelayProtocol.WSS });
             return options;
-        }
-
-        private JoinSessionOptions BuildJoinSessionOptions()
-        {
-            JoinSessionOptions joinOptions = new JoinSessionOptions();
-            joinOptions.WithNetworkOptions(new NetworkOptions { RelayProtocol = RelayProtocol.WSS });
-            return joinOptions;
         }
 
         private async Task<ISession> ConnectWithRecycleFallbackAsync(string baseRoomKey)
@@ -361,7 +350,7 @@ namespace VastMetaverseNetworking
                         if (sessionInfo.MaxPlayers - sessionInfo.AvailableSlots <= 0) continue;
                         try
                         {
-                            JoinSessionOptions joinOpts = BuildJoinSessionOptions();
+                            JoinSessionOptions joinOpts = new JoinSessionOptions();
                             return await MultiplayerService.Instance.JoinSessionByIdAsync(sessionInfo.Id, joinOpts);
                         }
                         catch (Exception joinByIdEx)
