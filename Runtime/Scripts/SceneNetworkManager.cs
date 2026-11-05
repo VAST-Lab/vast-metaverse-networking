@@ -22,7 +22,6 @@ namespace VastMetaverseNetworking
         public static SceneNetworkManager Instance { get; private set; }
 
         [SerializeField] private bool _startNetworked = false;
-        [SerializeField] private string _urlMultiplayerParam = "multiplayer";
         [SerializeField] private string _sessionName = "GlobalLobby";
         [SerializeField] private int _maxPlayers = 16;
         [SerializeField] private GameObject _joinButton;

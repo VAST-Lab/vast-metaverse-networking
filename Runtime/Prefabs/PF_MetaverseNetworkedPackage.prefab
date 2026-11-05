@@ -402,9 +402,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: VastMetaverseNetworking.Runtime::VastMetaverseNetworking.SceneNetworkManager
   _startNetworked: 0
-  _urlMultiplayerParam: multiplayer
   _sessionName: GlobalLobby
-  _maxPlayers: 32
+  _maxPlayers: 16
   _joinButton: {fileID: 8323601843143002627}
   _networkedPlayerPrefab: {fileID: -3250832497951320783, guid: c335beefa13e9dd42867985cd0bbfc89, type: 3}
   _sceneSyncManagerPrefab: {fileID: 1957154461362358291, guid: 26895b93dc985bd4bace03a89e7ed434, type: 3}
