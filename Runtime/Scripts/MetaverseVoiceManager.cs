@@ -121,9 +121,25 @@ namespace VastMetaverseNetworking
             if (MetaverseManager.LocalPlayer != null && Time.time >= _nextPositionUpdate)
             {
                 _nextPositionUpdate = Time.time + _positionUpdateInterval;
-                VivoxService.Instance.Set3DPosition(
-                    MetaverseManager.LocalPlayer.gameObject,
-                    _activeChannelName);
+                Vector3 playerPosition = MetaverseManager.LocalPlayer.transform.position;
+                Camera cam = Camera.main;
+                if (cam != null)
+                {
+                    // Hear from where your character stands, but facing where the camera looks,
+                    // so voices pan left and right as you turn the camera.
+                    VivoxService.Instance.Set3DPosition(
+                        playerPosition,
+                        playerPosition,
+                        cam.transform.forward,
+                        cam.transform.up,
+                        _activeChannelName);
+                }
+                else
+                {
+                    VivoxService.Instance.Set3DPosition(
+                        MetaverseManager.LocalPlayer.gameObject,
+                        _activeChannelName);
+                }
             }
 #endif
         }
