@@ -10,8 +10,11 @@ using Unity.Services.Lobbies;
 using Unity.Services.Lobbies.Models;
 using Unity.Services.Relay;
 using Unity.Services.Relay.Models;
+using TMPro;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 using VastMetaverseTools.Managers;
 using VastMetaverseTools.Player;
 
@@ -38,6 +41,8 @@ namespace VastMetaverseNetworking
         private Vector3 _pendingSpawnPos;
         private Quaternion _pendingSpawnRot;
         private bool _hasPendingTransform;
+        private GameObject _muteButton;
+        private TMP_Text _muteLabel;
 
         public bool IsConnected => !string.IsNullOrEmpty(_lobbyId) && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
 
@@ -67,6 +72,9 @@ namespace VastMetaverseNetworking
 
         private void Update()
         {
+            bool showMute = IsConnected && _voiceManager != null && _voiceManager.IsInVoice;
+            if (_muteButton != null && _muteButton.activeSelf != showMute) _muteButton.SetActive(showMute);
+
             if (string.IsNullOrEmpty(_lobbyId) || NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
 
             _heartbeatTimer += Time.deltaTime;
@@ -185,6 +193,7 @@ namespace VastMetaverseNetworking
 
                 // One voice channel per lobby, so players in different lobbies of the same scene can't hear each other.
                 await GetOrCreateVoiceManager().InitializeAndJoinVoiceAsync($"{baseRoomKey}_{_lobbyId}");
+                CreateMuteButton();
             }
             catch (Exception e)
             {
@@ -210,6 +219,40 @@ namespace VastMetaverseNetworking
             if (_voiceManager == null) _voiceManager = FindAnyObjectByType<MetaverseVoiceManager>();
             if (_voiceManager == null) _voiceManager = gameObject.AddComponent<MetaverseVoiceManager>();
             return _voiceManager;
+        }
+
+        // A copy of the Join button, in the same spot and style. The Join button is hidden while
+        // you're connected, and the mute button only shows while you're in voice chat.
+        private void CreateMuteButton()
+        {
+            if (_muteButton != null || _joinButton == null || _voiceManager == null) return;
+
+            _muteButton = Instantiate(_joinButton, _joinButton.transform.parent);
+            _muteButton.name = "MuteButton";
+            _muteButton.transform.SetSiblingIndex(_joinButton.transform.GetSiblingIndex() + 1);
+
+            Button button = _muteButton.GetComponentInChildren<Button>(true);
+            if (button != null)
+            {
+                // Turn off the copied "join lobby" click from the Inspector, then hook up mute.
+                for (int i = 0; i < button.onClick.GetPersistentEventCount(); i++)
+                {
+                    button.onClick.SetPersistentListenerState(i, UnityEventCallState.Off);
+                }
+                button.onClick.RemoveAllListeners();
+                button.onClick.AddListener(_voiceManager.ToggleMute);
+            }
+
+            _muteLabel = _muteButton.GetComponentInChildren<TMP_Text>(true);
+            _voiceManager.OnMuteChanged -= UpdateMuteLabel;
+            _voiceManager.OnMuteChanged += UpdateMuteLabel;
+            UpdateMuteLabel(_voiceManager.IsMuted);
+            _muteButton.SetActive(_voiceManager.IsInVoice);
+        }
+
+        private void UpdateMuteLabel(bool muted)
+        {
+            if (_muteLabel != null) _muteLabel.text = muted ? "Unmute Mic (M)" : "Mute Mic (M)";
         }
 
         private async Task LeaveVoiceAsync()
@@ -502,6 +545,7 @@ namespace VastMetaverseNetworking
 
         private async void OnDestroy()
         {
+            if (_voiceManager != null) _voiceManager.OnMuteChanged -= UpdateMuteLabel;
             if (NetworkManager.Singleton != null)
             {
                 NetworkManager.Singleton.OnServerStarted -= HandleServerStarted;

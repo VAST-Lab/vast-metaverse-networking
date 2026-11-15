@@ -3,6 +3,7 @@
     "rootNamespace": "VastMetaverseNetworking",
     "references": [
         "Unity.TextMeshPro",
+        "Unity.InputSystem",
         "Unity.Services.Authentication",
         "Unity.Netcode.Runtime",
         "VastMetaverseTools.Runtime",

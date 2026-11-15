@@ -1,6 +1,10 @@
 using System;
 using System.Threading.Tasks;
+using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.UI;
 using VastMetaverseTools.Managers;
 #if !UNITY_WEBGL || UNITY_EDITOR
 using Unity.Services.Vivox;
@@ -14,11 +18,36 @@ namespace VastMetaverseNetworking
         [SerializeField] private int _conversationalDistance = 2;
         [SerializeField] private float _audioFadeIntensity = 1.0f;
         [SerializeField] private float _positionUpdateInterval = 0.2f;
+        [Tooltip("Press this key to mute or unmute your mic while in voice chat.")]
+        [SerializeField] private Key _muteKey = Key.M;
 
         private string _activeChannelName;
         private bool _isChannelJoined;
         private bool _isVivoxInitialized;
         private float _nextPositionUpdate;
+
+        public bool IsInVoice => _isChannelJoined;
+        public bool IsMuted { get; private set; }
+        public event Action<bool> OnMuteChanged;
+
+        public void ToggleMute() => SetMuted(!IsMuted);
+
+        // Mutes only your mic; you still hear everyone else.
+        public void SetMuted(bool muted)
+        {
+            IsMuted = muted;
+            ApplyMute();
+            OnMuteChanged?.Invoke(muted);
+        }
+
+        private void ApplyMute()
+        {
+#if !UNITY_WEBGL || UNITY_EDITOR
+            if (!_isVivoxInitialized) return;
+            if (IsMuted) VivoxService.Instance.MuteInputDevice();
+            else VivoxService.Instance.UnmuteInputDevice();
+#endif
+        }
 
         public async Task InitializeAndJoinVoiceAsync(string channelName)
         {
@@ -49,6 +78,7 @@ namespace VastMetaverseNetworking
                     props);
 
                 _isChannelJoined = true;
+                ApplyMute(); // Stay muted across rejoins.
             }
             catch (Exception e)
             {
@@ -81,9 +111,14 @@ namespace VastMetaverseNetworking
         private void Update()
         {
 #if !UNITY_WEBGL || UNITY_EDITOR
-            if (!_isChannelJoined || MetaverseManager.LocalPlayer == null) return;
+            if (!_isChannelJoined) return;
 
-            if (Time.time >= _nextPositionUpdate)
+            if (Keyboard.current != null && Keyboard.current[_muteKey].wasPressedThisFrame && !IsTyping())
+            {
+                ToggleMute();
+            }
+
+            if (MetaverseManager.LocalPlayer != null && Time.time >= _nextPositionUpdate)
             {
                 _nextPositionUpdate = Time.time + _positionUpdateInterval;
                 VivoxService.Instance.Set3DPosition(
@@ -91,6 +126,13 @@ namespace VastMetaverseNetworking
                     _activeChannelName);
             }
 #endif
+        }
+
+        // So typing an "m" in a text box doesn't toggle the mic.
+        private static bool IsTyping()
+        {
+            GameObject selected = EventSystem.current != null ? EventSystem.current.currentSelectedGameObject : null;
+            return selected != null && (selected.GetComponent<TMP_InputField>() != null || selected.GetComponent<InputField>() != null);
         }
 
         private async void OnDestroy()
