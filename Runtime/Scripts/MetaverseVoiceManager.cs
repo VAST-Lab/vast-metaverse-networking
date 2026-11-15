@@ -17,15 +17,21 @@ namespace VastMetaverseNetworking
 
         private string _activeChannelName;
         private bool _isChannelJoined;
+        private bool _isVivoxInitialized;
         private float _nextPositionUpdate;
 
         public async Task InitializeAndJoinVoiceAsync(string channelName)
         {
+            await LeaveVoiceAsync();
             _activeChannelName = channelName;
 #if !UNITY_WEBGL || UNITY_EDITOR
             try
             {
-                await VivoxService.Instance.InitializeAsync();
+                if (!_isVivoxInitialized)
+                {
+                    await VivoxService.Instance.InitializeAsync();
+                    _isVivoxInitialized = true;
+                }
                 if (!VivoxService.Instance.IsLoggedIn)
                 {
                     await VivoxService.Instance.LoginAsync();
@@ -53,6 +59,25 @@ namespace VastMetaverseNetworking
 #endif
         }
 
+        // Leaves the voice channel (mic off for others) but stays logged in, so rejoining is quick.
+        public async Task LeaveVoiceAsync()
+        {
+#if !UNITY_WEBGL || UNITY_EDITOR
+            if (!_isChannelJoined) return;
+            _isChannelJoined = false;
+            try
+            {
+                await VivoxService.Instance.LeaveAllChannelsAsync();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[MetaverseVoiceManager] Leaving voice failed: {e.Message}");
+            }
+#else
+			await Task.CompletedTask;
+#endif
+        }
+
         private void Update()
         {
 #if !UNITY_WEBGL || UNITY_EDITOR
@@ -71,12 +96,13 @@ namespace VastMetaverseNetworking
         private async void OnDestroy()
         {
 #if !UNITY_WEBGL || UNITY_EDITOR
-            if (_isChannelJoined && VivoxService.Instance != null)
+            // Log out even after LeaveVoiceAsync, which leaves the channel but stays logged in.
+            if (_isVivoxInitialized && VivoxService.Instance != null)
             {
                 try
                 {
-                    await VivoxService.Instance.LeaveAllChannelsAsync();
-                    await VivoxService.Instance.LogoutAsync();
+                    if (_isChannelJoined) await VivoxService.Instance.LeaveAllChannelsAsync();
+                    if (VivoxService.Instance.IsLoggedIn) await VivoxService.Instance.LogoutAsync();
                 }
                 catch
                 {

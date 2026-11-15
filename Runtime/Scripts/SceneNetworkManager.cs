@@ -183,15 +183,8 @@ namespace VastMetaverseNetworking
                 string baseRoomKey = SanitizeSessionKey($"{_sessionName}_{SceneManager.GetActiveScene().name}");
                 await ExecuteMatchmakingAsync(baseRoomKey);
 
-                if (_voiceManager == null)
-                {
-                    _voiceManager = FindAnyObjectByType<MetaverseVoiceManager>();
-                    if (_voiceManager == null)
-                    {
-                        _voiceManager = gameObject.AddComponent<MetaverseVoiceManager>();
-                    }
-                }
-                await _voiceManager.InitializeAndJoinVoiceAsync(baseRoomKey);
+                // One voice channel per lobby, so players in different lobbies of the same scene can't hear each other.
+                await GetOrCreateVoiceManager().InitializeAndJoinVoiceAsync($"{baseRoomKey}_{_lobbyId}");
             }
             catch (Exception e)
             {
@@ -203,6 +196,27 @@ namespace VastMetaverseNetworking
             finally
             {
                 _isConnecting = false;
+            }
+        }
+
+        // The Voice Manager field can point at the prefab file, which never runs Update (so voice
+        // positions were never sent). Make a live copy in the scene before using it.
+        private MetaverseVoiceManager GetOrCreateVoiceManager()
+        {
+            if (_voiceManager != null && !_voiceManager.gameObject.scene.IsValid())
+            {
+                _voiceManager = Instantiate(_voiceManager);
+            }
+            if (_voiceManager == null) _voiceManager = FindAnyObjectByType<MetaverseVoiceManager>();
+            if (_voiceManager == null) _voiceManager = gameObject.AddComponent<MetaverseVoiceManager>();
+            return _voiceManager;
+        }
+
+        private async Task LeaveVoiceAsync()
+        {
+            if (_voiceManager != null && _voiceManager.gameObject.scene.IsValid())
+            {
+                await _voiceManager.LeaveVoiceAsync();
             }
         }
 
@@ -415,10 +429,11 @@ namespace VastMetaverseNetworking
             }
         }
 
-        private void HandleClientOrServerStopped(bool _)
+        private void HandleClientOrServerStopped(bool wasHost)
         {
             if (!_isConnecting)
             {
+                _ = LeaveVoiceAsync();
                 if (_joinButton != null) _joinButton.SetActive(true);
                 MetaverseManager.SpawnSingleplayerIfNull();
             }
@@ -471,6 +486,7 @@ namespace VastMetaverseNetworking
             {
                 NetworkManager.Singleton.Shutdown();
             }
+            await LeaveVoiceAsync();
             await LeaveLobbySilentlyAsync();
             if (_joinButton != null) _joinButton.SetActive(true);
             _lobbyId = null;
