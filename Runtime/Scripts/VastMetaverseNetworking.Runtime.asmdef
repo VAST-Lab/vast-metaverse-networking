@@ -6,6 +6,7 @@
         "Unity.InputSystem",
         "Unity.Services.Authentication",
         "Unity.Netcode.Runtime",
+        "Unity.Collections",
         "VastMetaverseTools.Runtime",
         "Unity.Services.Vivox",
         "Unity.Services.Multiplayer",

@@ -65,6 +65,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 8858885971535242741, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
       insertIndex: -1
       addedObject: {fileID: 5160189717473335605}
+    - targetCorrespondingSourceObject: {fileID: 8858885971535242741, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 7482664290538938088}
   m_SourcePrefab: {fileID: 100100000, guid: 91b684137d9dcec4f9e01c069f4cd23c, type: 3}
 --- !u!114 &484781144876683905 stripped
 MonoBehaviour:
@@ -200,3 +203,15 @@ MonoBehaviour:
   SwitchTransformSpaceWhenParented: 0
   Interpolate: 1
   SlerpPosition: 0
+--- !u!114 &7482664290538938088
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6287733854619189328}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2aac3124e68044c7a16bc9896b78e73b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: VastMetaverseNetworking.Runtime::VastMetaverseNetworking.PlayerSpeakingIndicator
