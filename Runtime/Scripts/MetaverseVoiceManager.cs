@@ -111,6 +111,7 @@ namespace VastMetaverseNetworking
         private void Update()
         {
 #if !UNITY_WEBGL || UNITY_EDITOR
+
             if (!_isChannelJoined) return;
 
             if (Keyboard.current != null && Keyboard.current[_muteKey].wasPressedThisFrame && !IsTyping())
