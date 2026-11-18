@@ -4,9 +4,7 @@ using TMPro;
 using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
-#if !UNITY_WEBGL || UNITY_EDITOR
 using Unity.Services.Vivox;
-#endif
 
 namespace VastMetaverseNetworking
 {
@@ -71,6 +69,8 @@ namespace VastMetaverseNetworking
         private string _localName;
         private float _nextPoll;
         private float _nextHeadSearch;
+
+        private MetaverseVoiceManager _voiceManager;
 
         public override void OnNetworkSpawn()
         {
@@ -174,26 +174,41 @@ namespace VastMetaverseNetworking
             inVoice = false;
             speaking = false;
             muted = false;
-#if !UNITY_WEBGL || UNITY_EDITOR
+
+            if (MetaverseVoiceManager.Instance != null)
+            {
+                inVoice = MetaverseVoiceManager.Instance.IsInVoice;
+                muted = MetaverseVoiceManager.Instance.IsMuted;
+            }
+
             try
             {
-                if (VivoxService.Instance == null || !VivoxService.Instance.IsLoggedIn) return;
-                muted = VivoxService.Instance.IsInputDeviceMuted;
-                foreach (var channel in VivoxService.Instance.ActiveChannels)
+                if (VivoxService.Instance != null && VivoxService.Instance.IsLoggedIn)
                 {
-                    foreach (VivoxParticipant participant in channel.Value)
+                    muted = VivoxService.Instance.IsInputDeviceMuted;
+
+#if !UNITY_WEBGL || UNITY_EDITOR
+                    if (VivoxService.Instance.ActiveChannels != null && VivoxService.Instance.ActiveChannels.Count > 0)
                     {
-                        if (!participant.IsSelf) continue;
                         inVoice = true;
-                        speaking |= participant.SpeechDetected;
+                        foreach (var channel in VivoxService.Instance.ActiveChannels.Values)
+                        {
+                            foreach (var participant in channel)
+                            {
+                                if (participant.IsSelf)
+                                {
+                                    speaking = participant.SpeechDetected;
+                                    break;
+                                }
+                            }
+                        }
                     }
+#endif
                 }
             }
-            catch (Exception)
+            catch
             {
-                // Vivox isn't initialized yet; treat as not in voice.
             }
-#endif
         }
 
         private void CreateTag()

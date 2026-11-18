@@ -6,14 +6,14 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using VastMetaverseTools.Managers;
-#if !UNITY_WEBGL || UNITY_EDITOR
 using Unity.Services.Vivox;
-#endif
 
 namespace VastMetaverseNetworking
 {
     public class MetaverseVoiceManager : MonoBehaviour
     {
+        public static MetaverseVoiceManager Instance { get; private set; }
+
         [SerializeField] private int _audibleDistance = 32;
         [SerializeField] private int _conversationalDistance = 2;
         [SerializeField] private float _audioFadeIntensity = 1.0f;
@@ -32,6 +32,16 @@ namespace VastMetaverseNetworking
 
         public void ToggleMute() => SetMuted(!IsMuted);
 
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+            Instance = this;
+        }
+
         // Mutes only your mic; you still hear everyone else.
         public void SetMuted(bool muted)
         {
@@ -42,18 +52,17 @@ namespace VastMetaverseNetworking
 
         private void ApplyMute()
         {
-#if !UNITY_WEBGL || UNITY_EDITOR
             if (!_isVivoxInitialized) return;
             if (IsMuted) VivoxService.Instance.MuteInputDevice();
             else VivoxService.Instance.UnmuteInputDevice();
-#endif
         }
 
+        // IMPORTANT FOR WEBGL: Call this method directly from a UI Button OnClick event
         public async Task InitializeAndJoinVoiceAsync(string channelName)
         {
             await LeaveVoiceAsync();
             _activeChannelName = channelName;
-#if !UNITY_WEBGL || UNITY_EDITOR
+
             try
             {
                 if (!_isVivoxInitialized)
@@ -66,6 +75,12 @@ namespace VastMetaverseNetworking
                     await VivoxService.Instance.LoginAsync();
                 }
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+                // WebGL only supports 2D Group Channels (3D positional audio throws NotImplementedException)
+                await VivoxService.Instance.JoinGroupChannelAsync(
+                    _activeChannelName,
+                    ChatCapability.AudioOnly);
+#else
                 Channel3DProperties props = new Channel3DProperties(
                     _audibleDistance,
                     _conversationalDistance,
@@ -76,6 +91,7 @@ namespace VastMetaverseNetworking
                     _activeChannelName,
                     ChatCapability.AudioOnly,
                     props);
+#endif
 
                 _isChannelJoined = true;
                 ApplyMute(); // Stay muted across rejoins.
@@ -84,15 +100,11 @@ namespace VastMetaverseNetworking
             {
                 Debug.LogWarning($"[MetaverseVoiceManager] Vivox setup failed: {e.Message}");
             }
-#else
-			await Task.CompletedTask;
-#endif
         }
 
         // Leaves the voice channel (mic off for others) but stays logged in, so rejoining is quick.
         public async Task LeaveVoiceAsync()
         {
-#if !UNITY_WEBGL || UNITY_EDITOR
             if (!_isChannelJoined) return;
             _isChannelJoined = false;
             try
@@ -103,15 +115,10 @@ namespace VastMetaverseNetworking
             {
                 Debug.LogWarning($"[MetaverseVoiceManager] Leaving voice failed: {e.Message}");
             }
-#else
-			await Task.CompletedTask;
-#endif
         }
 
         private void Update()
         {
-#if !UNITY_WEBGL || UNITY_EDITOR
-
             if (!_isChannelJoined) return;
 
             if (Keyboard.current != null && Keyboard.current[_muteKey].wasPressedThisFrame && !IsTyping())
@@ -119,6 +126,8 @@ namespace VastMetaverseNetworking
                 ToggleMute();
             }
 
+#if !UNITY_WEBGL || UNITY_EDITOR
+            // 3D positional updates are disabled on WebGL because it uses a 2D channel
             if (MetaverseManager.LocalPlayer != null && Time.time >= _nextPositionUpdate)
             {
                 _nextPositionUpdate = Time.time + _positionUpdateInterval;
@@ -126,8 +135,6 @@ namespace VastMetaverseNetworking
                 Camera cam = Camera.main;
                 if (cam != null)
                 {
-                    // Hear from where your character stands, but facing where the camera looks,
-                    // so voices pan left and right as you turn the camera.
                     VivoxService.Instance.Set3DPosition(
                         playerPosition,
                         playerPosition,
@@ -154,8 +161,6 @@ namespace VastMetaverseNetworking
 
         private async void OnDestroy()
         {
-#if !UNITY_WEBGL || UNITY_EDITOR
-            // Log out even after LeaveVoiceAsync, which leaves the channel but stays logged in.
             if (_isVivoxInitialized && VivoxService.Instance != null)
             {
                 try
@@ -168,9 +173,6 @@ namespace VastMetaverseNetworking
                 }
                 _isChannelJoined = false;
             }
-#else
-			await Task.CompletedTask;
-#endif
         }
     }
 }
