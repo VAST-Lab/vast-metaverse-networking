@@ -8,6 +8,8 @@ using UnityEngine.UI;
 using VastMetaverseTools.Managers;
 using Unity.Services.Vivox;
 
+using System.Runtime.InteropServices; // new
+
 namespace VastMetaverseNetworking
 {
     public class MetaverseVoiceManager : MonoBehaviour
@@ -21,6 +23,8 @@ namespace VastMetaverseNetworking
         [Tooltip("Press this key to mute or unmute your mic while in voice chat.")]
         [SerializeField] private Key _muteKey = Key.M;
 
+
+
         private string _activeChannelName;
         private bool _isChannelJoined;
         private bool _isVivoxInitialized;
@@ -29,6 +33,38 @@ namespace VastMetaverseNetworking
         public bool IsInVoice => _isChannelJoined;
         public bool IsMuted { get; private set; }
         public event Action<bool> OnMuteChanged;
+        private void OnVivoxLoggedIn()
+        {
+            Debug.Log("[Voice TEST] LOGGED IN EVENT FIRED");
+        }
+
+        private void OnVivoxLoggedOut()
+        {
+            Debug.LogWarning("[Voice TEST] LOGGED OUT EVENT FIRED");
+        }
+
+        private float _loginStartTime = -1f; // new
+        private bool _loginWarned; // new
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+[DllImport("__Internal")]
+private static extern void RequestMicrophone(string objName, string methodName);
+
+private TaskCompletionSource<string> _micTcs;
+
+// Called from JavaScript via SendMessage.
+public void OnMicResult(string result)
+{
+    _micTcs?.TrySetResult(result);
+}
+
+private Task<string> RequestMicAsync()
+{
+    _micTcs = new TaskCompletionSource<string>();
+    RequestMicrophone(gameObject.name, nameof(OnMicResult));
+    return _micTcs.Task;
+}
+#endif
 
         public void ToggleMute() => SetMuted(!IsMuted);
 
@@ -61,44 +97,141 @@ namespace VastMetaverseNetworking
         public async Task InitializeAndJoinVoiceAsync(string channelName)
         {
             await LeaveVoiceAsync();
-            _activeChannelName = channelName;
+            // Keep the channel dynamic, but make it WebGL-compatible.
+#if UNITY_WEBGL && !UNITY_EDITOR
+_activeChannelName = System.Text.RegularExpressions.Regex.Replace(
+    channelName,
+    @"[^a-zA-Z0-9-]",
+    "-"
+);
+#else
+_activeChannelName = channelName;
+#endif
+
+            Debug.Log("[Voice] Dynamic channel received: " + channelName);
+            Debug.Log("[Voice] Channel being used: " + _activeChannelName);
 
             try
             {
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+string micResult = await RequestMicAsync();
+Debug.Log("[Voice] 0 mic permission result: " + micResult);
+if (micResult != "granted") throw new Exception("Microphone not available: " + micResult);
+#endif
+                Debug.Log("[Voice] 1 initializing Vivox");
+
                 if (!_isVivoxInitialized)
                 {
                     await VivoxService.Instance.InitializeAsync();
                     _isVivoxInitialized = true;
+
+                    VivoxService.Instance.LoggedIn += OnVivoxLoggedIn;
+                    VivoxService.Instance.LoggedOut += OnVivoxLoggedOut;
                 }
+                Debug.Log("[Voice] 2 logging in");
+
+                Debug.Log("[Voice TEST] IsLoggedIn before login: " +
+                          VivoxService.Instance.IsLoggedIn);
+
                 if (!VivoxService.Instance.IsLoggedIn)
                 {
-                    await VivoxService.Instance.LoginAsync();
-                }
+                    _loginStartTime = Time.realtimeSinceStartup;
+                    _loginWarned = false;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
-                // WebGL only supports 2D Group Channels (3D positional audio throws NotImplementedException)
-                await VivoxService.Instance.JoinGroupChannelAsync(
-                    _activeChannelName,
-                    ChatCapability.AudioOnly);
+
+    // WebGL workaround: wait for the LoggedIn event instead
+    // of waiting indefinitely for LoginAsync().
+
+    var loginCompletion = new TaskCompletionSource<bool>();
+
+    Action loginHandler = () =>
+    {
+        Debug.Log("[Voice] WebGL login event received!");
+        loginCompletion.TrySetResult(true);
+    };
+
+    VivoxService.Instance.LoggedIn += loginHandler;
+
+    try
+    {
+        Task loginTask = VivoxService.Instance.LoginAsync();
+
+        // Handle the unlikely possibility that login completed
+        // before we started waiting.
+        if (VivoxService.Instance.IsLoggedIn)
+            loginCompletion.TrySetResult(true);
+
+        Task completed = await Task.WhenAny(
+            loginTask,
+            loginCompletion.Task
+        );
+
+        if (completed == loginTask)
+        {
+            await loginTask;
+        }
+        else
+        {
+            Debug.Log("[Voice] WebGL login confirmed by event.");
+
+            // Observe any eventual exception from the original task.
+            _ = loginTask.ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    Debug.LogException(t.Exception);
+            }, TaskScheduler.Default);
+        }
+
+        if (!VivoxService.Instance.IsLoggedIn)
+            throw new Exception("Login event received but Vivox is not logged in.");
+    }
+    finally
+    {
+        VivoxService.Instance.LoggedIn -= loginHandler;
+        _loginStartTime = -1f;
+    }
+
+#else
+
+                    try
+                    {
+                        await VivoxService.Instance.LoginAsync();
+                    }
+                    finally
+                    {
+                        _loginStartTime = -1f;
+                    }
+
+#endif
+                }
+
+                Debug.Log("[Voice] 2b login finished");
+
+                Debug.Log("[Voice TEST] IsLoggedIn after login: " +
+                          VivoxService.Instance.IsLoggedIn);
+
+                Debug.Log("[Voice TEST] IsLoggedIn after login: " +
+                          VivoxService.Instance.IsLoggedIn);
+                Debug.Log("[Voice] 3 joining channel " + _activeChannelName);
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+    await VivoxService.Instance.JoinGroupChannelAsync(_activeChannelName, ChatCapability.AudioOnly);
 #else
                 Channel3DProperties props = new Channel3DProperties(
-                    _audibleDistance,
-                    _conversationalDistance,
-                    _audioFadeIntensity,
-                    AudioFadeModel.InverseByDistance);
-
-                await VivoxService.Instance.JoinPositionalChannelAsync(
-                    _activeChannelName,
-                    ChatCapability.AudioOnly,
-                    props);
+                    _audibleDistance, _conversationalDistance, _audioFadeIntensity, AudioFadeModel.InverseByDistance);
+                await VivoxService.Instance.JoinPositionalChannelAsync(_activeChannelName, ChatCapability.AudioOnly, props);
 #endif
 
+                Debug.Log("[Voice] 4 joined");
                 _isChannelJoined = true;
-                ApplyMute(); // Stay muted across rejoins.
+                ApplyMute();
+                Debug.Log("[Voice] 5 done");
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[MetaverseVoiceManager] Vivox setup failed: {e.Message}");
+                Debug.LogWarning($"[MetaverseVoiceManager] Vivox setup failed: {e}");
             }
         }
 
@@ -119,6 +252,12 @@ namespace VastMetaverseNetworking
 
         private void Update()
         {
+            if (_loginStartTime > 0f && !_loginWarned && Time.realtimeSinceStartup - _loginStartTime > 15f)
+            {
+                _loginWarned = true;
+                Debug.LogWarning("[Voice] Login has been pending for 15s");
+            }
+
             if (!_isChannelJoined) return;
 
             if (Keyboard.current != null && Keyboard.current[_muteKey].wasPressedThisFrame && !IsTyping())

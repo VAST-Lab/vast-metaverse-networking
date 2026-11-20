@@ -109,10 +109,21 @@ namespace VastMetaverseNetworking
             if (cam != null) _tag.rotation = cam.transform.rotation;
             _tag.localScale = Vector3.one * _tagScale;
 
-            bool speaking = _netSpeaking.Value;
-            bool micVisible = speaking || (_showWhenSilent && _netInVoice.Value);
-            if (_micBubble.gameObject.activeSelf != micVisible) _micBubble.gameObject.SetActive(micVisible);
-            if (!micVisible) return;
+            /* bool speaking = _netSpeaking.Value;
+             bool micVisible = speaking || (_showWhenSilent && _netInVoice.Value);
+             if (_micBubble.gameObject.activeSelf != micVisible) _micBubble.gameObject.SetActive(micVisible);
+             if (!micVisible) return;*/
+
+            // TEST: Force microphone indicator to render.
+            bool speaking = false;
+            bool micVisible = true;
+
+            _micBubble.gameObject.SetActive(true);
+
+            _micRenderer.sprite = _micIcon;
+            _micRenderer.color = Color.green;
+            _micBubble.localScale = Vector3.one * _iconSize;
+            //end test
 
             bool muted = _netMuted.Value;
             _micRenderer.sprite = muted ? GetDefaultMutedMic() : _micIcon;
