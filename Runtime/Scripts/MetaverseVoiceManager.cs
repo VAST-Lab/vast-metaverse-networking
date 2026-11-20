@@ -32,6 +32,17 @@ namespace VastMetaverseNetworking
 
         public bool IsInVoice => _isChannelJoined;
         public bool IsMuted { get; private set; }
+#if UNITY_WEBGL && !UNITY_EDITOR
+[DllImport("__Internal")]
+private static extern float GetMicrophoneLevel();
+
+[DllImport("__Internal")]
+private static extern void StopMicrophoneMonitor();
+#endif
+
+        public bool IsSpeaking { get; private set; }
+
+        [SerializeField] private float _speechThreshold = 0.025f;
         public event Action<bool> OnMuteChanged;
         private void OnVivoxLoggedIn()
         {
@@ -82,6 +93,10 @@ private Task<string> RequestMicAsync()
         public void SetMuted(bool muted)
         {
             IsMuted = muted;
+
+            if (muted)
+                IsSpeaking = false;
+
             ApplyMute();
             OnMuteChanged?.Invoke(muted);
         }
@@ -259,6 +274,22 @@ if (micResult != "granted") throw new Exception("Microphone not available: " + m
             }
 
             if (!_isChannelJoined) return;
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+
+if (!IsMuted)
+{
+    float level = GetMicrophoneLevel();
+
+    IsSpeaking = level > _speechThreshold;
+
+}
+else
+{
+    IsSpeaking = false;
+}
+
+#endif
 
             if (Keyboard.current != null && Keyboard.current[_muteKey].wasPressedThisFrame && !IsTyping())
             {

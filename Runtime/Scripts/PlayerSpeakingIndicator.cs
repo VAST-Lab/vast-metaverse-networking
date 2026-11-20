@@ -70,11 +70,16 @@ namespace VastMetaverseNetworking
         private float _nextPoll;
         private float _nextHeadSearch;
 
+        private VivoxParticipant _localVivoxParticipant;
+        private bool _vivoxEventsSubscribed;
+
         private MetaverseVoiceManager _voiceManager;
 
         public override void OnNetworkSpawn()
         {
             CreateTag();
+
+            // Keep the rest of your existing code.
             _netName.OnValueChanged += OnNameChanged;
             if (IsOwner) ShareLocalName();
             ShowName(_netName.Value.ToString());
@@ -83,15 +88,43 @@ namespace VastMetaverseNetworking
         public override void OnNetworkDespawn()
         {
             _netName.OnValueChanged -= OnNameChanged;
-            if (_tag != null) Destroy(_tag.gameObject);
+
+            if (_vivoxEventsSubscribed && VivoxService.Instance != null)
+            {
+                VivoxService.Instance.ParticipantAddedToChannel -= OnParticipantAdded;
+                VivoxService.Instance.ParticipantRemovedFromChannel -= OnParticipantRemoved;
+                _vivoxEventsSubscribed = false;
+            }
+
+            UnsubscribeFromParticipant();
+
+            if (_tag != null)
+                Destroy(_tag.gameObject);
         }
 
         private void Update()
         {
-            if (!IsSpawned || !IsOwner || Time.time < _nextPoll) return;
+            if (!IsSpawned || !IsOwner) return;
+
+            SubscribeToVivox();
+
+            // Keep the rest of your existing Update code below.
+
+            if (Time.time < _nextPoll) return;
             _nextPoll = Time.time + _pollInterval;
 
             ReadOwnVoiceState(out bool inVoice, out bool speaking, out bool muted);
+            if (IsOwner && MetaverseVoiceManager.Instance != null)
+            {
+                speaking = MetaverseVoiceManager.Instance.IsSpeaking;
+                muted = MetaverseVoiceManager.Instance.IsMuted;
+                inVoice = MetaverseVoiceManager.Instance.IsInVoice;
+            }
+#if UNITY_WEBGL && !UNITY_EDITOR
+// WebGL uses the Vivox participant speech state.
+speaking = _localVivoxParticipant != null &&
+           _localVivoxParticipant.SpeechDetected;
+#endif
             if (_netInVoice.Value != inVoice) _netInVoice.Value = inVoice;
             if (_netSpeaking.Value != speaking) _netSpeaking.Value = speaking;
             if (_netMuted.Value != muted) _netMuted.Value = muted;
@@ -105,33 +138,64 @@ namespace VastMetaverseNetworking
             if (_tag == null) return;
 
             _tag.position = GetHeadPosition();
+
             Camera cam = Camera.main;
-            if (cam != null) _tag.rotation = cam.transform.rotation;
+            if (cam != null)
+                _tag.rotation = cam.transform.rotation;
+
             _tag.localScale = Vector3.one * _tagScale;
 
-            /* bool speaking = _netSpeaking.Value;
-             bool micVisible = speaking || (_showWhenSilent && _netInVoice.Value);
-             if (_micBubble.gameObject.activeSelf != micVisible) _micBubble.gameObject.SetActive(micVisible);
-             if (!micVisible) return;*/
-
-            // TEST: Force microphone indicator to render.
-            bool speaking = false;
-            bool micVisible = true;
-
-            _micBubble.gameObject.SetActive(true);
-
-            _micRenderer.sprite = _micIcon;
-            _micRenderer.color = Color.green;
-            _micBubble.localScale = Vector3.one * _iconSize;
-            //end test
-
+            // Read actual networked voice states.
+            bool speaking = _netSpeaking.Value;
             bool muted = _netMuted.Value;
-            _micRenderer.sprite = muted ? GetDefaultMutedMic() : _micIcon;
-            if (muted) speaking = false;
+            bool inVoice = _netInVoice.Value;
 
-            float pulse = speaking ? 1f + 0.1f * Mathf.Sin(Time.time * 12f) : 1f;
+            if (IsOwner && MetaverseVoiceManager.Instance != null)
+            {
+                speaking = MetaverseVoiceManager.Instance.IsSpeaking;
+                muted = MetaverseVoiceManager.Instance.IsMuted;
+                inVoice = MetaverseVoiceManager.Instance.IsInVoice;
+            }
+
+            // Determine microphone visibility.
+            bool micVisible = speaking || (_showWhenSilent && inVoice);
+
+            _micBubble.gameObject.SetActive(micVisible);
+
+            if (!micVisible) return;
+
+            // Muted players cannot be speaking.
+            if (muted)
+                speaking = false;
+
+            // Animate microphone while speaking.
+            float pulse = speaking
+                ? 1f + 0.1f * Mathf.Sin(Time.time * 12f)
+                : 1f;
+
             _micBubble.localScale = Vector3.one * (_iconSize * pulse);
-            _micRenderer.color = muted ? _mutedMicColor : speaking ? _speakingMicColor : _silentMicColor;
+
+            // Update microphone icon and color.
+            _micRenderer.sprite = muted
+                ? GetDefaultMutedMic()
+                : _micIcon;
+
+            if (muted)
+            {
+                _micRenderer.color = _mutedMicColor;
+            }
+            else if (speaking)
+            {
+                _micRenderer.color = _speakingMicColor;
+            }
+            else
+            {
+                _micRenderer.color = _silentMicColor;
+            }
+
+            Debug.Log("[BUBBLE TEST] Speaking: " + speaking +
+                      " | Muted: " + muted +
+                      " | Visible: " + _micBubble.gameObject.activeSelf);
         }
 
         private void ShareLocalName()
@@ -381,5 +445,90 @@ namespace VastMetaverseNetworking
             Vector2 outside = new Vector2(Mathf.Max(d.x, 0f), Mathf.Max(d.y, 0f));
             return outside.magnitude + Mathf.Min(Mathf.Max(d.x, d.y), 0f);
         }
+
+        private void SubscribeToVivox()
+        {
+            if (_vivoxEventsSubscribed)
+                return;
+
+            if (VivoxService.Instance == null)
+            {
+                Debug.LogWarning("[Voice Indicator] Vivox instance is NULL");
+                return;
+            }
+
+            if (!VivoxService.Instance.IsLoggedIn)
+            {
+                return;
+            }
+
+            VivoxService.Instance.ParticipantAddedToChannel += OnParticipantAdded;
+            VivoxService.Instance.ParticipantRemovedFromChannel += OnParticipantRemoved;
+
+            _vivoxEventsSubscribed = true;
+
+            Debug.Log("[Voice Indicator] Successfully subscribed to participant events!");
+
+            // Important: check whether the participant already exists.
+            foreach (var channel in VivoxService.Instance.ActiveChannels.Values)
+            {
+                foreach (var participant in channel)
+                {
+                    Debug.Log(
+                        "[Voice Indicator] Existing participant: " +
+                        participant.DisplayName +
+                        " | IsSelf: " + participant.IsSelf
+                    );
+
+                    OnParticipantAdded(participant);
+                }
+            }
+        }
+
+        private void OnParticipantAdded(VivoxParticipant participant)
+        {
+            if (!IsOwner || !participant.IsSelf) return;
+
+            _localVivoxParticipant = participant;
+
+            participant.ParticipantSpeechDetected += OnSpeechDetected;
+            participant.ParticipantMuteStateChanged += OnMuteStateChanged;
+
+            Debug.Log("[Voice Indicator] Local participant detected!");
+        }
+
+        private void OnParticipantRemoved(VivoxParticipant participant)
+        {
+            if (_localVivoxParticipant != participant) return;
+
+            UnsubscribeFromParticipant();
+        }
+
+        private void OnSpeechDetected()
+        {
+            if (!IsOwner || _localVivoxParticipant == null) return;
+
+            _netSpeaking.Value = _localVivoxParticipant.SpeechDetected;
+
+            Debug.Log("[Voice Indicator] Speaking: " + _netSpeaking.Value);
+        }
+
+        private void OnMuteStateChanged()
+        {
+            if (!IsOwner || _localVivoxParticipant == null) return;
+
+            _netMuted.Value = _localVivoxParticipant.IsMuted;
+        }
+
+        private void UnsubscribeFromParticipant()
+        {
+            if (_localVivoxParticipant != null)
+            {
+                _localVivoxParticipant.ParticipantSpeechDetected -= OnSpeechDetected;
+                _localVivoxParticipant.ParticipantMuteStateChanged -= OnMuteStateChanged;
+                _localVivoxParticipant = null;
+            }
+        }
+
     }
 }
